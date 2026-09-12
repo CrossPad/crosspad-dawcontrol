@@ -1,17 +1,18 @@
 {
   "name": "DAW Control",
   "id": "dawcontrol",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "DAW controller surface: pads to the DAW, LED/text feedback from it (FL Studio, Ableton)",
   "category": "tools",
   "icon": "dawcontrol.png",
   "component_path": "components/crosspad-dawcontrol",
   "platforms": ["esp-idf", "pc"],
   "requires": {
-    "crosspad-core": ">=1.6.0",
+    "crosspad-core": ">=1.13.0",
     "crosspad-gui": ">=1.3.0"
   },
   "changelog": [
+    "0.2.0: host row (CPU, RAM, clock) and firmware row, fed by crosspad-hil's MIDI hub over companion SysEx",
     "0.1.0: pads to the host, LED/text/beat/transport from it over the DAW SysEx protocol; FL Studio script"
   ]
 }

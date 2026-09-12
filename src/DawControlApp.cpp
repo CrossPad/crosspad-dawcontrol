@@ -24,13 +24,19 @@
 #include "crosspad/settings/CrosspadSettings.hpp"
 #include "crosspad/midi/IMidiOutput.hpp"
 #include "crosspad/pad/PadManager.hpp"
+#include "crosspad/platform/IClock.hpp"
 #include "crosspad/platform/PlatformServices.hpp"
 #include "crosspad/protocol/Stm32MessageHandler.hpp"
+#include "crosspad/status/CrosspadStatus.hpp"
 
 #include "lvgl.h"
 
 #include <cstdio>
+#include <ctime>
 #include <memory>
+
+// Fed by the platform's HOST_INFO / FW_LATEST companion verbs.
+extern crosspad::CrosspadStatus status;
 
 #ifdef ESP_PLATFORM
 extern "C" {
@@ -43,9 +49,14 @@ namespace {
 
 constexpr uint32_t kTickMs = 50;
 constexpr uint32_t kBeatFlashTicks = 3;   // 150 ms of dot per beat
+constexpr uint32_t kHostRowTicks = 1000 / kTickMs;   // host stats and clock, once a second
+constexpr uint32_t kMbPerGb = 1024;
 
 lv_obj_t* s_root = nullptr;
 lv_obj_t* s_hostLabel = nullptr;
+lv_obj_t* s_hostInfoLabel = nullptr;
+lv_obj_t* s_fwLabel = nullptr;
+uint32_t s_hostRowTicksLeft = 0;
 lv_obj_t* s_rows[dawcontrol::kTextRows] = {};
 lv_obj_t* s_transportLabel = nullptr;
 lv_obj_t* s_beatDot = nullptr;
@@ -116,9 +127,55 @@ void redraw()
     }
 }
 
+// GB with one decimal, from MB, without LVGL's float formatting.
+void format_gb(char* out, size_t cap, uint32_t mb)
+{
+    const uint32_t tenths = mb * 10 / kMbPerGb;
+    snprintf(out, cap, "%lu.%lu", static_cast<unsigned long>(tenths / 10),
+             static_cast<unsigned long>(tenths % 10));
+}
+
+// What the host companion worker reports: its load and clock, and whether it
+// knows of newer firmware. Separate from the DAW rows — the worker is not the
+// DAW script and keeps reporting while the DAW shows nothing.
+void draw_host_rows()
+{
+    if (s_hostInfoLabel) {
+        if (status.hostAlive(crosspad::getClock().getTimeUs())) {
+            char used[12], total[12], clock[8] = "--:--";
+            format_gb(used, sizeof(used), status.hostRamUsedMb);
+            format_gb(total, sizeof(total), status.hostRamTotalMb);
+            const time_t now = time(nullptr);
+            struct tm local;
+            if (localtime_r(&now, &local)) strftime(clock, sizeof(clock), "%H:%M", &local);
+            lv_label_set_text_fmt(s_hostInfoLabel, "PC  CPU %u%%  RAM %s/%s GB  %s",
+                                  static_cast<unsigned>(status.hostCpuPct), used, total, clock);
+            lv_obj_set_style_text_color(s_hostInfoLabel, kAccent, 0);
+        } else {
+            lv_label_set_text(s_hostInfoLabel, "PC companion not running");
+            lv_obj_set_style_text_color(s_hostInfoLabel, kDim, 0);
+        }
+    }
+    if (s_fwLabel) {
+        if (status.fwUpdateAvailable) {
+            lv_label_set_text_fmt(s_fwLabel, "v%s available - crosspad.app/device", status.fwLatest);
+            lv_obj_set_style_text_color(s_fwLabel, kBeatBar, 0);
+        } else if (status.fwLatest[0]) {
+            lv_label_set_text(s_fwLabel, "Firmware up to date");
+            lv_obj_set_style_text_color(s_fwLabel, kDim, 0);
+        } else {
+            lv_label_set_text(s_fwLabel, "");
+        }
+    }
+}
+
 void tick_cb(lv_timer_t*)
 {
     if (s_screen.dirty.exchange(false)) redraw();
+    if (s_hostRowTicksLeft == 0 || --s_hostRowTicksLeft == 0) {
+        s_hostRowTicksLeft = kHostRowTicks;
+        draw_host_rows();
+    }
 
     // The beat value is a level, not an edge: the host sends 1/2 on every
     // beat and 0 in between, so a flash is triggered on any non-zero write.
@@ -320,6 +377,8 @@ lv_obj_t* DawControl_create(lv_obj_t* parent, App* app)
         lv_obj_set_style_text_font(s_rows[r], &lv_font_montserrat_18, 0);
     }
     s_transportLabel = make_row(s_root, "", kDim);
+    s_hostInfoLabel = make_row(s_root, "", kDim);
+    s_fwLabel = make_row(s_root, "", kDim);
     make_audio_bar(s_root);
 
     // -- pad logic: registration only, activation is framework-owned --
@@ -384,6 +443,9 @@ void DawControl_destroy(lv_obj_t* root)
     s_hostLabel = nullptr;
     for (auto& r : s_rows) r = nullptr;
     s_transportLabel = nullptr;
+    s_hostInfoLabel = nullptr;
+    s_fwLabel = nullptr;
+    s_hostRowTicksLeft = 0;
     s_beatDot = nullptr;
     for (auto& b : s_inputBtns) b = nullptr;
     s_usbBtn = nullptr;

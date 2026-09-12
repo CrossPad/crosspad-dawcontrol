@@ -78,6 +78,17 @@ foreign-manufacturer SysEx back to the host.
 3. On the board open **DAW Control**. The screen switches from "no host" to
    "FL Studio | pads" as soon as the script answers.
 
+The host row: the MIDI hub (`crosspad-hil midi hub`, the same service that
+gives FL its fixed port) reports this computer's CPU, RAM and clock to the
+board every 2 s as companion notify frames (`0x1F 04`, `HOST_INFO` /
+`FW_LATEST`, see platform-idf `docs/subsystems/ble-midi.md`). It runs from
+login, so this works with FL closed too. While the reports arrive the status
+bar shows the USB glyph in place of the charging bolt, and DAW Control's host
+row shows the numbers. Put `{"version": "x.y.z"}` in
+`~/.config/crosspad/latest.json` to announce newer firmware: the glyph turns
+orange, DAW Control and Settings → Info say "vX at crosspad.app/device", and
+the board remembers it across resets.
+
 What the script does: pads reach the selected channel (put FPC there and the
 pads wear FPC's pad colours; any other instrument paints them the channel
 colour). Rows: channel name, pattern name, tempo. The beat dot follows FL's
@@ -117,5 +128,5 @@ idf.py app-install --app dawcontrol --origin <this repo URL>
 idf.py fullclean && idf.py build
 ```
 
-Requires crosspad-core ≥ 1.6.0 (`CROSSPAD_CMD_DAW`, `IMidiOutput::sendSysEx`,
-`PlatformServices::stm32MessageHandler`).
+Requires crosspad-core ≥ 1.13.0 (`CROSSPAD_CMD_DAW`, `IMidiOutput::sendSysEx`,
+`PlatformServices::stm32MessageHandler`, the host fields of `CrosspadStatus`).

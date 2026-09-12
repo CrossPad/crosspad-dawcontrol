@@ -1,6 +1,6 @@
 {
     "name": "crosspad-dawcontrol",
-    "version": "0.1.0",
+    "version": "0.2.0",
     "description": "DAW controller surface: pads to the DAW, LED/text feedback from it (FL Studio, Ableton)",
     "keywords": ["crosspad", "dawcontrol", "lvgl", "pad"],
     "dependencies": {
