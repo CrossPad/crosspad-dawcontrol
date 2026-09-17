@@ -38,8 +38,9 @@ void ScreenState::clearRows()
     for (auto& r : rows_) r[0] = '\0';
 }
 
-void sendHello(crosspad::IMidiOutput& out)
+void sendHello(crosspad::IMidiOutput& out, ScreenState& screen, int64_t nowUs)
 {
+    screen.lastHelloUs.store(nowUs);
     const uint8_t frame[] = {
         CROSSPAD_SYSEX_START, CROSSPAD_SYSEX_MANUFACTURER, CROSSPAD_CMD_DAW, kSubHello,
         kProtoVersion, kPadCount, kTextRows,
@@ -58,6 +59,15 @@ void sendMode(crosspad::IMidiOutput& out, uint8_t mode)
     out.sendSysEx(frame, sizeof(frame));
 }
 
+void sendTilt(crosspad::IMidiOutput& out, uint8_t padIdx, uint8_t value)
+{
+    const uint8_t frame[] = {
+        CROSSPAD_SYSEX_START, CROSSPAD_SYSEX_MANUFACTURER, CROSSPAD_CMD_DAW, kSubTilt,
+        (uint8_t)(padIdx & 0x7F), (uint8_t)(value & 0x7F), CROSSPAD_SYSEX_END,
+    };
+    out.sendSysEx(frame, sizeof(frame));
+}
+
 void sendPad(crosspad::IMidiOutput& out, uint8_t padIdx, bool pressed)
 {
     const uint8_t frame[] = {
@@ -72,7 +82,7 @@ void sendPad(crosspad::IMidiOutput& out, uint8_t padIdx, bool pressed)
 static uint8_t to8(uint8_t v7) { return (uint8_t)((v7 & 0x7F) << 1); }
 
 void handleFrame(const uint8_t* args, unsigned len, DawControlPadLogic& pads,
-                 ScreenState& screen, crosspad::IMidiOutput& out)
+                 ScreenState& screen, crosspad::IMidiOutput& out, int64_t nowUs)
 {
     if (!args || len < 1) return;
     const uint8_t sub = args[0];
@@ -82,11 +92,11 @@ void handleFrame(const uint8_t* args, unsigned len, DawControlPadLogic& pads,
     switch (sub) {
     case kSubHello:
         screen.dawId.store(n >= 1 ? a[0] : (uint8_t)kDawOther);
-        // The host answers every device hello with its own, so a board that
-        // rebooted under a running DAW reconnects by itself; replying only
-        // to the first host hello is what keeps that from ping-ponging.
-        if (!screen.connected.exchange(true)) {
-            sendHello(out);
+        screen.connected.store(true);
+        // The host answers every device hello with its own; a host hello
+        // right after ours is that answer and gets no reply (see sendHello).
+        if (nowUs - screen.lastHelloUs.load() > (int64_t)kHelloEchoGuardMs * 1000) {
+            sendHello(out, screen, nowUs);
         }
         // The host's re-sync paints the keyboard layout; the board's mode is
         // the board's, so it follows every host hello and the host repaints.
@@ -135,18 +145,27 @@ void handleFrame(const uint8_t* args, unsigned len, DawControlPadLogic& pads,
         if (n >= 2) pads.setLayout(a[0], a[1]);
         break;
 
+    case kSubPing:
+        return;   // liveness only; the app stamped the clock before dispatch
+
     case kSubBye:
-        screen.connected.store(false);
-        screen.dawId.store(kDawOther);
-        screen.beat.store(0);
-        screen.transport.store(0);
-        screen.clearRows();
-        pads.clearHostColors();
+        hostGone(pads, screen);
         break;
 
     default:
         return;   // unknown sub: no screen change, nothing to redraw
     }
+    screen.dirty.store(true);
+}
+
+void hostGone(DawControlPadLogic& pads, ScreenState& screen)
+{
+    screen.connected.store(false);
+    screen.dawId.store(kDawOther);
+    screen.beat.store(0);
+    screen.transport.store(0);
+    screen.clearRows();
+    pads.clearHostColors();
     screen.dirty.store(true);
 }
 

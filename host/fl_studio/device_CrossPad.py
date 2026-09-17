@@ -25,6 +25,8 @@ it is in with `mode`.
 This file must stay self-contained: FL's embedded Python has no pip.
 """
 
+import time
+
 import channels
 import device
 import general
@@ -48,7 +50,12 @@ SUB_TRANSPORT = 0x06
 SUB_MODE = 0x07
 SUB_CONFIG = 0x08
 SUB_PAD = 0x09             # device -> host: pad state, control mode only
+SUB_PING = 0x0A            # host -> device: still here, once a second
+SUB_TILT = 0x0B            # device -> host: pad value — roll since that pad went down
 SUB_BYE = 0x7F
+
+PING_PERIOD_S = 1.0        # the board forgets a host silent for 5 s
+TILT_CENTRE = 64
 
 MODE_PADS = 0
 MODE_CONTROL = 3
@@ -94,9 +101,22 @@ CTRL_COLORS = {
 }
 PEAK_MODE_BOTH = 2         # mixer.getTrackPeaks mode: 0 left, 1 right, 2 the louder of the two
 PEAK_STEPS = 8             # brightness is quantised so the LEDs update on level changes, not every tick
+BEAT_BAR_COLOR = 0xFFB347  # metronome pad on the bar, the screen's beat dot colours
+BEAT_BEAT_COLOR = 0xE0E0FF
+BEAT_FLASH_S = 0.12        # how long the metronome pad holds the flash — FL's own 0 comes too soon to see
 MUTED_BRIGHTNESS = 0.06    # a muted channel keeps its hue, barely lit
 MIN_LIT_BRIGHTNESS = 0.12  # a silent, unmuted channel is still visibly there
 LED_SINGLE_MAX = 4         # up to this many changed pads go out as `led`, more as one `led_all`
+
+# Tempo from the metronome pad: hold it and lean the board left or right.
+# Full tilt (±30 deg on the board) is ±TEMPO_TILT_SPAN BPM around the tempo at
+# the press; values within TEMPO_SNAP_PULL of a multiple of TEMPO_SNAP_STEP
+# snap to it, everything else is whole BPM.
+TEMPO_TILT_SPAN = 20.0
+TEMPO_SNAP_STEP = 5
+TEMPO_SNAP_PULL = 1.5
+TEMPO_MIN, TEMPO_MAX = 20.0, 999.0
+TILT_DEAD_ZONE = 3         # tilt units either side of centre that still count as "not moved"
 
 # --- state -------------------------------------------------------------------
 
@@ -106,6 +126,9 @@ _last_transport = None
 _last_encoder = None
 _connected = False
 _mode = MODE_PADS
+_last_ping = 0.0
+_metro_flash_until = 0.0   # the metronome pad shows the beat colour until then
+_metro_hold = None         # {"tempo0": BPM at the press, "moved": bool} while the metronome pad is down
 
 
 # --- frame helpers -----------------------------------------------------------
@@ -218,10 +241,7 @@ def _push_text():
     bpm = mixer.getCurrentTempo() / 1000.0   # default form is milli-BPM; True gives a plain int
     _text(0, name)
     _text(1, pat)
-    if _mode == MODE_CONTROL:
-        _text(2, "CTRL %.1f BPM mutes 1-8" % bpm)
-    else:
-        _text(2, "%.1f BPM" % bpm)
+    _text(2, "%.1f BPM" % bpm)
 
 
 def _push_transport(force=False):
@@ -263,8 +283,54 @@ def _set_mode(mode):
     _push_text()
 
 
+def _snap_tempo(raw):
+    """Whole BPM, pulled onto multiples of TEMPO_SNAP_STEP when close, clamped to FL's range."""
+    raw = max(TEMPO_MIN, min(TEMPO_MAX, raw))
+    step = round(raw / TEMPO_SNAP_STEP) * TEMPO_SNAP_STEP
+    if abs(raw - step) <= TEMPO_SNAP_PULL:
+        return float(step)
+    return float(round(raw))
+
+
+def _set_tempo(bpm):
+    flags = midi.REC_Control | midi.REC_UpdateControl
+    general.processRECEvent(midi.REC_Tempo, int(round(bpm * 1000)), flags)
+
+
+def _control_tilt(pad, value):
+    """The board leaned while `pad` is held: on the metronome pad that is the tempo."""
+    global _metro_hold
+    if pad != CTRL_METRONOME or _metro_hold is None:
+        return
+    offset = value - TILT_CENTRE
+    if abs(offset) > TILT_DEAD_ZONE:
+        _metro_hold["moved"] = True
+    if not _metro_hold["moved"]:
+        return
+    bpm = _snap_tempo(_metro_hold["tempo0"] + offset / 63.0 * TEMPO_TILT_SPAN)
+    if abs(bpm - mixer.getCurrentTempo() / 1000.0) >= 0.5:
+        _set_tempo(bpm)
+        _push_text()
+
+
+def _control_release(pad):
+    """The metronome pad toggles on release, and only when the hold was not a tempo gesture."""
+    global _metro_hold
+    if pad != CTRL_METRONOME or _metro_hold is None:
+        return
+    moved = _metro_hold["moved"]
+    _metro_hold = None
+    if not moved:
+        transport.globalTransport(FPT_METRONOME, 1)
+        _push_colors()
+
+
 def _control_press(pad):
-    """One control-layout pad went down. Releases are ignored: every button is momentary."""
+    """One control-layout pad went down. Buttons are momentary; the metronome pad acts on release."""
+    global _metro_hold
+    if pad == CTRL_METRONOME:
+        _metro_hold = {"tempo0": mixer.getCurrentTempo() / 1000.0, "moved": False}
+        return
     if pad == CTRL_PLAY:
         transport.start()
     elif pad == CTRL_STOP:
@@ -277,8 +343,6 @@ def _control_press(pad):
         patterns.jumpToPattern(max(1, patterns.patternNumber() - 1))
     elif pad == CTRL_PATTERN_NEXT:
         patterns.jumpToPattern(min(patterns.patternCount(), patterns.patternNumber() + 1))
-    elif pad == CTRL_METRONOME:
-        transport.globalTransport(FPT_METRONOME, 1)
     elif pad == CTRL_UNDO:
         general.undo()
     elif CTRL_MUTE_FIRST <= pad < CTRL_MUTE_FIRST + CTRL_MUTE_COUNT:
@@ -313,8 +377,15 @@ def OnSysEx(event):
         _set_mode(data[4])
         event.handled = True
     elif sub == SUB_PAD:
-        if _connected and len(data) >= 6 and data[5] == 1:
-            _control_press(data[4])
+        if _connected and len(data) >= 6:
+            if data[5] == 1:
+                _control_press(data[4])
+            else:
+                _control_release(data[4])
+        event.handled = True
+    elif sub == SUB_TILT:
+        if _connected and len(data) >= 6:
+            _control_tilt(data[4], data[5])
         event.handled = True
     elif sub == SUB_HELLO and len(data) >= 8:
         pads = data[5]
@@ -340,16 +411,37 @@ def OnRefresh(flags):
 def OnIdle():
     # Tempo and pattern edits do not always raise a refresh flag; the row
     # cache makes this cheap when nothing changed. In control mode the LEDs
-    # follow mixer faders and mutes the same way, through the colour cache.
+    # follow the mixer meters and mutes the same way, through the colour cache.
+    global _last_ping, _metro_flash_until
     if _connected:
+        now = time.monotonic()
         _push_text()
         if _mode == MODE_CONTROL:
-            _push_colors()
+            if _metro_flash_until and now >= _metro_flash_until:
+                _metro_flash_until = 0.0
+                _push_colors(force=True)
+            elif not _metro_flash_until:
+                _push_colors()
+        if now - _last_ping >= PING_PERIOD_S:
+            _last_ping = now
+            _send(SUB_PING)
 
 
 def OnUpdateBeatIndicator(value):
-    if _connected:
-        _send(SUB_BEAT, [value])
+    if not _connected:
+        return
+    _send(SUB_BEAT, [value])
+    if _mode != MODE_CONTROL or _last_colors is None:
+        return
+    # The metronome pad blinks with the beat: bar and beat in the screen's
+    # dot colours for BEAT_FLASH_S, then OnIdle repaints. Colour passes pause
+    # meanwhile so the meters do not overwrite the flash.
+    global _metro_flash_until
+    if value:
+        flash = _rgb7(BEAT_BAR_COLOR if value == 1 else BEAT_BEAT_COLOR)
+        _last_colors[CTRL_METRONOME] = flash
+        _send(SUB_LED, [CTRL_METRONOME] + list(flash))
+        _metro_flash_until = time.monotonic() + BEAT_FLASH_S
 
 
 def OnMidiMsg(event):

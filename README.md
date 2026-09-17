@@ -27,7 +27,7 @@ Catalog of record: crosspad-hil `crosspad_hil/knowledge/sysex.yaml`, `daw`.
 | sub | direction | payload |
 |---|---|---|
 | `01 hello` | host → device | `daw_id proto_ver` (1 FL Studio, 2 Ableton, 0 other) |
-| `01 hello` | device → host | `proto_ver pads rows caps` — reply, and unsolicited on every app show |
+| `01 hello` | device → host | `proto_ver pads rows caps` — reply (unless the device's own hello went out < 1 s earlier: that host hello is the answer to it), unsolicited on every app show and every 2 s while no host is known |
 | `02 led` | host → device | `pad r g b` |
 | `03 led_all` | host → device | 16 × `r g b` |
 | `04 text` | host → device | `row` + chars (empty clears the row) |
@@ -37,6 +37,8 @@ Catalog of record: crosspad-hil `crosspad_hil/knowledge/sysex.yaml`, `daw`.
 | `07 mode` | device → host | `0 pads / 3 control` — the board's layout, after every host hello and on every double tap of the case |
 | `08 config` | host → device | `base_note channel(0..15)` — default 36 / channel 10 |
 | `09 pad` | device → host | `pad state(1 press / 0 release)` — control mode only; no notes or aftertouch go out there |
+| `0A ping` | host → device | no args, once a second — the board drops a host silent for 5 s and hellos every 2 s until one answers |
+| `0B tilt` | device → host | `pad value` — the board's roll since `pad` went down, 64 level, ±63 = ±30°; while a control-mode pad is held and the value changes |
 | `7F bye` | host → device | host script unloading |
 
 Device → host beyond `hello`, `mode` and `pad` is plain MIDI: NoteOn/NoteOff
@@ -48,7 +50,12 @@ in *control* mode a press goes out as `09 pad` and the host decides what it
 does; another double tap is the keyboard again. The board always starts as a
 keyboard and tells the host its layout with `07 mode`, also after every host
 hello, so a reconnect paints the right one. Bench: `IMU_GESTURE DOUBLE_TAP`
-over CDC, `DAW_STATE` shows `mode=3`. The navigation
+over CDC, `DAW_STATE` shows `mode=3`.
+
+**A host that vanishes is noticed.** The script pings once a second; five
+seconds without any frame and the screen is back to "no host" (rows, colours
+and transport cleared), and the board hellos every two seconds until a host
+answers — a DAW restart reconnects by itself, with the app left open. The navigation
 encoder is emitted by the firmware itself on channel 1: CC 1 = detent index
 0..15 (wraps), CC 64 = switch. Host scripts turn the CC 1 wrap into a delta.
 
@@ -111,7 +118,7 @@ Control layout (double tap the case), row 0 at the top, LEDs lit by state:
 | row | pads |
 |---|---|
 | 0 | **Play/Pause** (green) · **Stop** (red) · **Record** (red) · **Loop mode** pattern/song (yellow when song) |
-| 1 | **Pattern −** · **Pattern +** (blue) · **Metronome** (white when on) · **Undo** (purple) |
+| 1 | **Pattern −** · **Pattern +** (blue) · **Metronome** (white when on, blinks with the beat; hold it and lean the board left/right for the tempo, ±20 BPM per hold, snapping to multiples of 5) · **Undo** (purple) |
 | 2–3 | **Mute** channel rack channels 1–8: the channel's colour, as bright as its mixer track's meter right now (8 steps, refreshed from `OnIdle`), a glimmer when muted |
 
 ### USB audio under Wine

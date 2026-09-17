@@ -48,6 +48,7 @@ public:
     /// Notes (false) or `pad` frames (true); held notes are released on the way.
     void setControlMode(bool control);
     bool controlMode() const { return control_.load(); }
+    bool held(uint8_t padIdx) const { return padIdx < 16 && held_[padIdx].load(); }
 
 private:
     void paint(uint8_t padIdx, bool held);
