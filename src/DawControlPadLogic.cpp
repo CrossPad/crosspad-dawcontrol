@@ -1,4 +1,5 @@
 #include "crosspad-dawcontrol/DawControlPadLogic.hpp"
+#include "crosspad-dawcontrol/DawProtocol.hpp"
 
 #include "crosspad/midi/IMidiOutput.hpp"
 #include "crosspad/pad/PadManager.hpp"
@@ -34,14 +35,29 @@ void DawControlPadLogic::onActivate(crosspad::PadManager& padManager)
 
 void DawControlPadLogic::onDeactivate(crosspad::PadManager& padManager)
 {
-    auto& out = crosspad::getMidiOutput();
-    for (uint8_t i = 0; i < 16; ++i) {
-        if (held_[i].exchange(false)) {
-            out.sendNoteOff(baseNote_.load() + i, 0, channel_.load());
-        }
-        padManager.setPadColor(i, 0, 0, 0);
-    }
+    releaseHeldNotes();
+    for (uint8_t i = 0; i < 16; ++i) padManager.setPadColor(i, 0, 0, 0);
     padManager_ = nullptr;
+}
+
+// Every note-on this handler sent gets its note-off; a control-mode press
+// gets its release. Called on deactivate, layout change and mode change.
+void DawControlPadLogic::releaseHeldNotes()
+{
+    auto& out = crosspad::getMidiOutput();
+    const bool control = control_.load();
+    for (uint8_t i = 0; i < 16; ++i) {
+        if (!held_[i].exchange(false)) continue;
+        if (control) dawcontrol::sendPad(out, i, false);
+        else         out.sendNoteOff(baseNote_.load() + i, 0, channel_.load());
+    }
+}
+
+void DawControlPadLogic::setControlMode(bool control)
+{
+    if (control_.load() == control) return;
+    releaseHeldNotes();
+    control_.store(control);
 }
 
 void DawControlPadLogic::onPadPress(crosspad::PadManager&, uint8_t padIdx,
@@ -49,23 +65,33 @@ void DawControlPadLogic::onPadPress(crosspad::PadManager&, uint8_t padIdx,
 {
     if (padIdx >= 16) return;
     held_[padIdx].store(true);
-    crosspad::getMidiOutput().sendNoteOn(baseNote_.load() + padIdx,
-                                         velocity ? velocity : 1, channel_.load());
+    if (control_.load()) {
+        dawcontrol::sendPad(crosspad::getMidiOutput(), padIdx, true);
+    } else {
+        crosspad::getMidiOutput().sendNoteOn(baseNote_.load() + padIdx,
+                                             velocity ? velocity : 1, channel_.load());
+    }
     paint(padIdx, true);
 }
 
 void DawControlPadLogic::onPadRelease(crosspad::PadManager&, uint8_t padIdx)
 {
     if (padIdx >= 16) return;
-    held_[padIdx].store(false);
-    crosspad::getMidiOutput().sendNoteOff(baseNote_.load() + padIdx, 0, channel_.load());
+    // A press that went out as a note comes back as a note-off even if the
+    // mode flipped in between: the flip released it already, so nothing here.
+    if (!held_[padIdx].exchange(false)) { paint(padIdx, false); return; }
+    if (control_.load()) {
+        dawcontrol::sendPad(crosspad::getMidiOutput(), padIdx, false);
+    } else {
+        crosspad::getMidiOutput().sendNoteOff(baseNote_.load() + padIdx, 0, channel_.load());
+    }
     paint(padIdx, false);
 }
 
 void DawControlPadLogic::onPadPressure(crosspad::PadManager&, uint8_t padIdx,
                                        uint8_t pressure)
 {
-    if (padIdx >= 16) return;
+    if (padIdx >= 16 || control_.load()) return;
     crosspad::getMidiOutput().sendAftertouch(baseNote_.load() + padIdx,
                                              pressure > 127 ? 127 : pressure,
                                              channel_.load());
@@ -88,15 +114,9 @@ void DawControlPadLogic::clearHostColors()
 
 void DawControlPadLogic::setLayout(uint8_t baseNote, uint8_t channel)
 {
-    // A layout change under a held pad would orphan its note-off; releases
-    // still use the old note because the pad is re-read at release time only
-    // through baseNote_, so flush first.
-    auto& out = crosspad::getMidiOutput();
-    for (uint8_t i = 0; i < 16; ++i) {
-        if (held_[i].exchange(false)) {
-            out.sendNoteOff(baseNote_.load() + i, 0, channel_.load());
-        }
-    }
+    // A layout change under a held pad would orphan its note-off, so flush
+    // first.
+    releaseHeldNotes();
     baseNote_.store(baseNote > 127 - 15 ? 127 - 15 : baseNote);
     channel_.store(channel & 0x0F);
 }

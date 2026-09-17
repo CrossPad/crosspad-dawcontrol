@@ -33,12 +33,22 @@ Catalog of record: crosspad-hil `crosspad_hil/knowledge/sysex.yaml`, `daw`.
 | `04 text` | host → device | `row` + chars (empty clears the row) |
 | `05 beat` | host → device | `0 off / 1 bar / 2 beat` |
 | `06 transport` | host → device | bit0 playing, bit1 recording, bit2 loop |
-| `07 mode` | host → device | `0 pads / 1 steps / 2 clips` (shown; pads always send notes in 0.1) |
+| `07 mode` | host → device | `0 pads / 1 steps / 2 clips` (shown only) |
+| `07 mode` | device → host | `0 pads / 3 control` — the board's layout, after every host hello and on every double tap of the case |
 | `08 config` | host → device | `base_note channel(0..15)` — default 36 / channel 10 |
+| `09 pad` | device → host | `pad state(1 press / 0 release)` — control mode only; no notes or aftertouch go out there |
 | `7F bye` | host → device | host script unloading |
 
-Device → host beyond `hello` is plain MIDI: NoteOn/NoteOff `base_note + pad`
-with the pad velocity, polyphonic aftertouch from pressure. The navigation
+Device → host beyond `hello`, `mode` and `pad` is plain MIDI: NoteOn/NoteOff
+`base_note + pad` with the pad velocity, polyphonic aftertouch from pressure.
+
+**Two layouts, one double tap.** Knock the case twice (the IMU's double tap,
+`MotionGesture::DoubleTap` on the event bus) and the pads stop being a keyboard:
+in *control* mode a press goes out as `09 pad` and the host decides what it
+does; another double tap is the keyboard again. The board always starts as a
+keyboard and tells the host its layout with `07 mode`, also after every host
+hello, so a reconnect paints the right one. Bench: `IMU_GESTURE DOUBLE_TAP`
+over CDC, `DAW_STATE` shows `mode=3`. The navigation
 encoder is emitted by the firmware itself on channel 1: CC 1 = detent index
 0..15 (wraps), CC 64 = switch. Host scripts turn the CC 1 wrap into a delta.
 
@@ -95,6 +105,14 @@ colour). Rows: channel name, pattern name, tempo. The beat dot follows FL's
 beat indicator. Encoder scrolls the channel rack selection, its switch is
 play/pause. Hits are lit on the board by the pad itself; FL does not need to
 echo them.
+
+Control layout (double tap the case), row 0 at the top, LEDs lit by state:
+
+| row | pads |
+|---|---|
+| 0 | **Play/Pause** (green) · **Stop** (red) · **Record** (red) · **Loop mode** pattern/song (yellow when song) |
+| 1 | **Pattern −** · **Pattern +** (blue) · **Metronome** (white when on) · **Undo** (purple) |
+| 2–3 | **Mute** channel rack channels 1–8: the channel's colour, as bright as its mixer track's fader (0 dB = full), a glimmer when muted |
 
 ### USB audio under Wine
 

@@ -17,6 +17,10 @@
  * With an active handler PadManager does not send its own notes, which is
  * the point: the layout the host asked for (`config`) is applied here.
  *
+ * In control mode (the board's double tap) a pad is not a note at all: the
+ * press and release go to the host as `pad` frames and the host decides what
+ * they do (transport, mutes…). Pressure is dropped there.
+ *
  * Runs on the pad thread and the MIDI receive task; nothing here touches LVGL.
  */
 class DawControlPadLogic : public crosspad::IPadLogicHandler {
@@ -41,13 +45,19 @@ public:
     uint8_t baseNote() const { return baseNote_.load(); }
     uint8_t channel() const { return channel_.load(); }
 
+    /// Notes (false) or `pad` frames (true); held notes are released on the way.
+    void setControlMode(bool control);
+    bool controlMode() const { return control_.load(); }
+
 private:
     void paint(uint8_t padIdx, bool held);
     uint32_t restingColor(uint8_t padIdx) const;
+    void releaseHeldNotes();
 
     std::atomic<uint32_t> hostColor_[16] = {};   // 0xRRGGBB, 0 = none
     std::atomic<bool> held_[16] = {};
     std::atomic<uint8_t> baseNote_{kDefaultBaseNote};
     std::atomic<uint8_t> channel_{kDefaultChannel};
+    std::atomic<bool> control_{false};
     crosspad::PadManager* padManager_ = nullptr;
 };

@@ -15,11 +15,18 @@ colours, pattern name, tempo, transport and the beat, and paints the pads and
 LCD rows with them. Frames follow the `daw` section of crosspad-hil
 `knowledge/sysex.yaml`; keep the constants below in step with it.
 
+The board has two layouts, switched by a double tap on its case: keyboard
+(pads play the selected channel) and control, where a pad is a button the
+board reports as a `pad` frame and this script acts on — transport, pattern,
+metronome, undo, and mutes for channel rack channels 1–8 whose LEDs glow as
+loud as their mixer track. The board says which layout it is in with `mode`.
+
 This file must stay self-contained: FL's embedded Python has no pip.
 """
 
 import channels
 import device
+import general
 import midi
 import mixer
 import patterns
@@ -39,7 +46,11 @@ SUB_BEAT = 0x05
 SUB_TRANSPORT = 0x06
 SUB_MODE = 0x07
 SUB_CONFIG = 0x08
+SUB_PAD = 0x09             # device -> host: pad state, control mode only
 SUB_BYE = 0x7F
+
+MODE_PADS = 0
+MODE_CONTROL = 3
 
 DAW_ID_FL_STUDIO = 1
 PROTO_VER = 1
@@ -59,6 +70,31 @@ ENCODER_DETENTS = 16
 FPC_PLUGIN_NAME = "FPC"
 FPC_PARAM_COLOR = 2        # plugins.getPadInfo paramIndex: 0 count, 1 semitone, 2 colour
 
+# --- control layout: pad index = row * 4 + column, row 0 at the top ----------
+
+CTRL_PLAY, CTRL_STOP, CTRL_RECORD, CTRL_LOOP_MODE = 0, 1, 2, 3
+CTRL_PATTERN_PREV, CTRL_PATTERN_NEXT, CTRL_METRONOME, CTRL_UNDO = 4, 5, 6, 7
+CTRL_MUTE_FIRST = 8        # pads 8..15 mute channel rack channels 0..7
+CTRL_MUTE_COUNT = 8
+
+FPT_METRONOME = 110        # transport.globalTransport command (midi.FPT_Metronome)
+LOOP_MODE_SONG = 1         # transport.getLoopMode(): 0 pattern, 1 song
+
+# Control-mode LED colours as 0xRRGGBB: (off/idle, on/active).
+CTRL_COLORS = {
+    CTRL_PLAY: (0x104020, 0x30FF60),
+    CTRL_STOP: (0x401818, 0xFF4040),
+    CTRL_RECORD: (0x401010, 0xFF2020),
+    CTRL_LOOP_MODE: (0x403010, 0xFFC020),
+    CTRL_PATTERN_PREV: (0x2060FF, 0x2060FF),
+    CTRL_PATTERN_NEXT: (0x2060FF, 0x2060FF),
+    CTRL_METRONOME: (0x303030, 0xE0E0E0),
+    CTRL_UNDO: (0x8040FF, 0x8040FF),
+}
+MIXER_VOLUME_UNITY = 0.8   # mixer.getTrackVolume() at 0 dB; louder still scales up to 1.0
+MUTED_BRIGHTNESS = 0.06    # a muted channel keeps its hue, barely lit
+MIN_LIT_BRIGHTNESS = 0.15  # an unmuted channel with the fader down is still visibly there
+
 # --- state -------------------------------------------------------------------
 
 _last_rows = ["", "", ""]
@@ -66,6 +102,7 @@ _last_colors = None
 _last_transport = None
 _last_encoder = None
 _connected = False
+_mode = MODE_PADS
 
 
 # --- frame helpers -----------------------------------------------------------
@@ -111,9 +148,46 @@ def _pad_colors():
     return colors
 
 
+def _scale(color, brightness):
+    """FL colour int scaled to `brightness` (0..1), as 7-bit r g b."""
+    r, g, b = _rgb7(color)
+    k = max(0.0, min(1.0, brightness))
+    return (int(r * k), int(g * k), int(b * k))
+
+
+def _mute_pad_color(chan):
+    """Channel colour, as bright as its mixer track is loud; muted = a glimmer."""
+    if chan >= channels.channelCount():
+        return (0, 0, 0)
+    color = channels.getChannelColor(chan)
+    if channels.isChannelMuted(chan):
+        return _scale(color, MUTED_BRIGHTNESS)
+    track = channels.getTargetFxTrack(chan)
+    volume = mixer.getTrackVolume(track) / MIXER_VOLUME_UNITY
+    return _scale(color, max(MIN_LIT_BRIGHTNESS, volume))
+
+
+def _control_colors():
+    """16 colours for the control layout: state-lit buttons, then the eight mutes."""
+    active = {
+        CTRL_PLAY: transport.isPlaying(),
+        CTRL_STOP: not transport.isPlaying(),
+        CTRL_RECORD: transport.isRecording(),
+        CTRL_LOOP_MODE: transport.getLoopMode() == LOOP_MODE_SONG,
+        CTRL_PATTERN_PREV: True,
+        CTRL_PATTERN_NEXT: True,
+        CTRL_METRONOME: ui.isMetronomeEnabled(),
+        CTRL_UNDO: True,
+    }
+    colors = [_rgb7(CTRL_COLORS[pad][1 if active[pad] else 0]) for pad in range(CTRL_MUTE_FIRST)]
+    for i in range(CTRL_MUTE_COUNT):
+        colors.append(_mute_pad_color(i))
+    return colors
+
+
 def _push_colors(force=False):
     global _last_colors
-    colors = _pad_colors()
+    colors = _control_colors() if _mode == MODE_CONTROL else _pad_colors()
     if not force and colors == _last_colors:
         return
     _last_colors = colors
@@ -130,7 +204,10 @@ def _push_text():
     bpm = mixer.getCurrentTempo() / 1000.0   # default form is milli-BPM; True gives a plain int
     _text(0, name)
     _text(1, pat)
-    _text(2, "%.1f BPM" % bpm)
+    if _mode == MODE_CONTROL:
+        _text(2, "CTRL %.1f BPM mutes 1-8" % bpm)
+    else:
+        _text(2, "%.1f BPM" % bpm)
 
 
 def _push_transport(force=False):
@@ -153,10 +230,49 @@ def _push_all():
     _last_colors = None
     _last_transport = None
     _send(SUB_CONFIG, [BASE_NOTE, MIDI_CHANNEL - 1])
-    _send(SUB_MODE, [0])
+    # The layout is the board's: it answers every hello with its `mode`, and
+    # _set_mode repaints for it. Until then paint for the mode last known.
     _push_colors(force=True)
     _push_text()
     _push_transport(force=True)
+
+
+# --- control mode ------------------------------------------------------------
+
+def _set_mode(mode):
+    global _mode
+    mode = MODE_CONTROL if mode == MODE_CONTROL else MODE_PADS
+    if mode == _mode:
+        return
+    _mode = mode
+    _push_colors(force=True)
+    _push_text()
+
+
+def _control_press(pad):
+    """One control-layout pad went down. Releases are ignored: every button is momentary."""
+    if pad == CTRL_PLAY:
+        transport.start()
+    elif pad == CTRL_STOP:
+        transport.stop()
+    elif pad == CTRL_RECORD:
+        transport.record()
+    elif pad == CTRL_LOOP_MODE:
+        transport.setLoopMode()
+    elif pad == CTRL_PATTERN_PREV:
+        patterns.jumpToPattern(max(1, patterns.patternNumber() - 1))
+    elif pad == CTRL_PATTERN_NEXT:
+        patterns.jumpToPattern(min(patterns.patternCount(), patterns.patternNumber() + 1))
+    elif pad == CTRL_METRONOME:
+        transport.globalTransport(FPT_METRONOME, 1)
+    elif pad == CTRL_UNDO:
+        general.undo()
+    elif CTRL_MUTE_FIRST <= pad < CTRL_MUTE_FIRST + CTRL_MUTE_COUNT:
+        chan = pad - CTRL_MUTE_FIRST
+        if chan < channels.channelCount():
+            channels.muteChannel(chan)
+    _push_colors()
+    _push_transport()
 
 
 # --- FL callbacks ------------------------------------------------------------
@@ -173,10 +289,20 @@ def OnDeInit():
 
 
 def OnSysEx(event):
-    """Device hello: the app just started (or answered ours) — sync everything."""
+    """Device hello (sync everything), its `mode` (repaint), a control-mode `pad` (act)."""
     global _connected
     data = event.sysex
-    if len(data) >= 8 and data[1] == MANUFACTURER and data[2] == CMD_DAW and data[3] == SUB_HELLO:
+    if len(data) < 5 or data[1] != MANUFACTURER or data[2] != CMD_DAW:
+        return
+    sub = data[3]
+    if sub == SUB_MODE:
+        _set_mode(data[4])
+        event.handled = True
+    elif sub == SUB_PAD:
+        if _connected and len(data) >= 6 and data[5] == 1:
+            _control_press(data[4])
+        event.handled = True
+    elif sub == SUB_HELLO and len(data) >= 8:
         pads = data[5]
         _connected = pads >= PAD_COUNT
         if _connected:
@@ -199,9 +325,12 @@ def OnRefresh(flags):
 
 def OnIdle():
     # Tempo and pattern edits do not always raise a refresh flag; the row
-    # cache makes this cheap when nothing changed.
+    # cache makes this cheap when nothing changed. In control mode the LEDs
+    # follow mixer faders and mutes the same way, through the colour cache.
     if _connected:
         _push_text()
+        if _mode == MODE_CONTROL:
+            _push_colors()
 
 
 def OnUpdateBeatIndicator(value):
@@ -228,3 +357,54 @@ def OnMidiMsg(event):
         if event.data2 > 0:
             transport.start()
         event.handled = True
+
+
+# --- optional bench bridge ---------------------------------------------------
+#
+# A `flbridge.py` beside this file (the fl-studio-mcp FL Bridge) rides on the
+# same controller entry: FL allows one script per port, and under Wine one open
+# MIDI input, so the bridge cannot be its own controller. It sees only what
+# this script left unhandled — its SysEx is another manufacturer's. Without
+# the file nothing changes.
+
+try:
+    import flbridge as _bridge
+    print("CrossPad: FL Bridge module loaded")
+except Exception as _e:   # noqa: BLE001 — FL's script host dies on a raised import error
+    _bridge = None
+    print("CrossPad: FL Bridge not loaded: " + repr(_e))
+
+if _bridge is not None:
+    _crosspad_OnInit = OnInit
+    _crosspad_OnDeInit = OnDeInit
+    _crosspad_OnIdle = OnIdle
+    _crosspad_OnSysEx = OnSysEx
+    _crosspad_OnMidiMsg = OnMidiMsg
+
+    def OnInit():
+        _crosspad_OnInit()
+        try:
+            _bridge.OnInit()
+        except Exception as e:
+            print("bridge OnInit failed: %r" % (e,))
+
+    def OnDeInit():
+        try:
+            _bridge.OnDeInit()
+        except Exception:
+            pass
+        _crosspad_OnDeInit()
+
+    def OnIdle():
+        _crosspad_OnIdle()
+        _bridge.OnIdle()
+
+    def OnSysEx(event):
+        _crosspad_OnSysEx(event)
+        if not event.handled:
+            _bridge.OnSysEx(event)
+
+    def OnMidiMsg(event):
+        _crosspad_OnMidiMsg(event)
+        if not event.handled:
+            _bridge.OnMidiMsg(event)

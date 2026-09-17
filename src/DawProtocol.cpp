@@ -43,8 +43,26 @@ void sendHello(crosspad::IMidiOutput& out)
     const uint8_t frame[] = {
         CROSSPAD_SYSEX_START, CROSSPAD_SYSEX_MANUFACTURER, CROSSPAD_CMD_DAW, kSubHello,
         kProtoVersion, kPadCount, kTextRows,
-        (uint8_t)(kCapRgb | kCapText | kCapEncoder | kCapAftertouch),
+        (uint8_t)(kCapRgb | kCapText | kCapEncoder | kCapAftertouch | kCapControl),
         CROSSPAD_SYSEX_END,
+    };
+    out.sendSysEx(frame, sizeof(frame));
+}
+
+void sendMode(crosspad::IMidiOutput& out, uint8_t mode)
+{
+    const uint8_t frame[] = {
+        CROSSPAD_SYSEX_START, CROSSPAD_SYSEX_MANUFACTURER, CROSSPAD_CMD_DAW, kSubMode,
+        (uint8_t)(mode & 0x7F), CROSSPAD_SYSEX_END,
+    };
+    out.sendSysEx(frame, sizeof(frame));
+}
+
+void sendPad(crosspad::IMidiOutput& out, uint8_t padIdx, bool pressed)
+{
+    const uint8_t frame[] = {
+        CROSSPAD_SYSEX_START, CROSSPAD_SYSEX_MANUFACTURER, CROSSPAD_CMD_DAW, kSubPad,
+        (uint8_t)(padIdx & 0x7F), (uint8_t)(pressed ? 1 : 0), CROSSPAD_SYSEX_END,
     };
     out.sendSysEx(frame, sizeof(frame));
 }
@@ -70,6 +88,9 @@ void handleFrame(const uint8_t* args, unsigned len, DawControlPadLogic& pads,
         if (!screen.connected.exchange(true)) {
             sendHello(out);
         }
+        // The host's re-sync paints the keyboard layout; the board's mode is
+        // the board's, so it follows every host hello and the host repaints.
+        sendMode(out, screen.mode.load());
         break;
 
     case kSubLed:
@@ -102,7 +123,12 @@ void handleFrame(const uint8_t* args, unsigned len, DawControlPadLogic& pads,
         break;
 
     case kSubMode:
-        if (n >= 1) screen.mode.store(a[0] > kModeClips ? (uint8_t)kModePads : a[0]);
+        // Host-shown modes only: control is entered from the board, never
+        // asked for by the host.
+        if (n >= 1 && a[0] <= kModeClips) {
+            screen.mode.store(a[0]);
+            pads.setControlMode(false);
+        }
         break;
 
     case kSubConfig:

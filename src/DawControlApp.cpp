@@ -21,6 +21,8 @@
 
 #include "crosspad-gui/platform/IGuiPlatform.h"
 #include "crosspad/app/AppRegistrar.hpp"
+#include "crosspad/event/EventData.hpp"
+#include "crosspad/event/IEventBus.hpp"
 #include "crosspad/settings/CrosspadSettings.hpp"
 #include "crosspad/midi/IMidiOutput.hpp"
 #include "crosspad/pad/PadManager.hpp"
@@ -65,6 +67,7 @@ uint32_t s_beatTicksLeft = 0;
 
 std::shared_ptr<DawControlPadLogic> s_padLogic;
 dawcontrol::ScreenState s_screen;
+crosspad::SubscriptionHandle s_motionSub = nullptr;   // double tap flips keyboard/control
 
 #ifdef DAWCONTROL_USE_ENCODER
 lv_group_t* s_encGroup = nullptr;
@@ -91,6 +94,7 @@ const char* mode_name(uint8_t mode)
     switch (mode) {
     case dawcontrol::kModeSteps: return "steps";
     case dawcontrol::kModeClips: return "clips";
+    case dawcontrol::kModeControl: return "control";
     default: return "pads";
     }
 }
@@ -118,12 +122,20 @@ void redraw()
     }
     if (s_transportLabel) {
         const uint8_t t = s_screen.transport.load();
-        lv_label_set_text_fmt(s_transportLabel, "%s %s %s  |  note %d ch %d",
-                              (t & dawcontrol::kTransportPlaying) ? LV_SYMBOL_PLAY : LV_SYMBOL_STOP,
-                              (t & dawcontrol::kTransportRecording) ? "REC" : "   ",
-                              (t & dawcontrol::kTransportLoop) ? LV_SYMBOL_LOOP : "  ",
-                              s_padLogic ? s_padLogic->baseNote() : 0,
-                              s_padLogic ? s_padLogic->channel() + 1 : 0);
+        const bool control = s_padLogic && s_padLogic->controlMode();
+        if (control) {
+            lv_label_set_text_fmt(s_transportLabel, "%s %s %s  |  control pads",
+                                  (t & dawcontrol::kTransportPlaying) ? LV_SYMBOL_PLAY : LV_SYMBOL_STOP,
+                                  (t & dawcontrol::kTransportRecording) ? "REC" : "   ",
+                                  (t & dawcontrol::kTransportLoop) ? LV_SYMBOL_LOOP : "  ");
+        } else {
+            lv_label_set_text_fmt(s_transportLabel, "%s %s %s  |  note %d ch %d",
+                                  (t & dawcontrol::kTransportPlaying) ? LV_SYMBOL_PLAY : LV_SYMBOL_STOP,
+                                  (t & dawcontrol::kTransportRecording) ? "REC" : "   ",
+                                  (t & dawcontrol::kTransportLoop) ? LV_SYMBOL_LOOP : "  ",
+                                  s_padLogic ? s_padLogic->baseNote() : 0,
+                                  s_padLogic ? s_padLogic->channel() + 1 : 0);
+        }
     }
 }
 
@@ -200,6 +212,27 @@ void host_frame(const uint8_t* args, unsigned len)
 {
     if (!s_padLogic) return;
     dawcontrol::handleFrame(args, len, *s_padLogic, s_screen, crosspad::getMidiOutput());
+}
+
+// Keyboard <-> control, from the board's double tap. Arrives on the event bus
+// off the LVGL thread, so the flip is deferred to it; the host learns the
+// new mode from a `mode` frame and repaints the pads for it.
+void toggle_control_mode(void*)
+{
+    if (!s_root || !s_padLogic) return;
+    const bool control = !s_padLogic->controlMode();
+    s_padLogic->setControlMode(control);
+    s_screen.mode.store(control ? (uint8_t)dawcontrol::kModeControl
+                                : (uint8_t)dawcontrol::kModePads);
+    dawcontrol::sendMode(crosspad::getMidiOutput(), s_screen.mode.load());
+    s_screen.dirty.store(true);
+}
+
+void motion_gesture_cb(const void* data, crosspad::EventType, void*)
+{
+    auto* d = static_cast<const crosspad::MotionGestureData*>(data);
+    if (!d || d->gesture != crosspad::MotionGesture::DoubleTap) return;
+    lv_async_call(toggle_control_mode, nullptr);
 }
 
 lv_obj_t* make_row(lv_obj_t* parent, const char* text, lv_color_t color)
@@ -393,6 +426,10 @@ lv_obj_t* DawControl_create(lv_obj_t* parent, App* app)
     if (auto* h = crosspad::getPlatformServices().stm32MessageHandler) {
         h->setDawCallback(host_frame);
     }
+    if (!s_motionSub) {
+        s_motionSub = crosspad::getEventBus().subscribe(crosspad::EventType::MotionGesture,
+                                                        motion_gesture_cb, nullptr);
+    }
 
     s_screen.dirty.store(true);
     s_timer = lv_timer_create(tick_cb, kTickMs, nullptr);
@@ -427,6 +464,10 @@ void DawControl_destroy(lv_obj_t* root)
     if (auto* h = crosspad::getPlatformServices().stm32MessageHandler) {
         h->setDawCallback(nullptr);
     }
+    if (s_motionSub) {
+        crosspad::getEventBus().unsubscribe(s_motionSub);
+        s_motionSub = nullptr;
+    }
     if (s_timer) {
         lv_timer_delete(s_timer);
         s_timer = nullptr;
@@ -438,7 +479,11 @@ void DawControl_destroy(lv_obj_t* root)
     s_screen.beat.store(0);
     s_screen.transport.store(0);
     s_screen.clearRows();
-    if (s_padLogic) s_padLogic->clearHostColors();
+    s_screen.mode.store(dawcontrol::kModePads);   // every start is a keyboard
+    if (s_padLogic) {
+        s_padLogic->clearHostColors();
+        s_padLogic->setControlMode(false);
+    }
 
     s_hostLabel = nullptr;
     for (auto& r : s_rows) r = nullptr;

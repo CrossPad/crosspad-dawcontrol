@@ -37,17 +37,21 @@ enum Sub : uint8_t {
     kSubTransport = 0x06,
     kSubMode = 0x07,
     kSubConfig = 0x08,
+    kSubPad = 0x09,       // device -> host: pad state, control mode only
     kSubBye = 0x7F,
 };
 
 enum DawId : uint8_t { kDawOther = 0, kDawFlStudio = 1, kDawAbleton = 2 };
-enum PadMode : uint8_t { kModePads = 0, kModeSteps = 1, kModeClips = 2 };
+// 0..2 are what the host shows; kModeControl is the board's own: pads stop
+// playing notes and report presses as `pad` frames for the host to act on.
+enum PadMode : uint8_t { kModePads = 0, kModeSteps = 1, kModeClips = 2, kModeControl = 3 };
 
 // Capability bits in the device's hello reply.
 constexpr uint8_t kCapRgb = 1 << 0;
 constexpr uint8_t kCapText = 1 << 1;
 constexpr uint8_t kCapEncoder = 1 << 2;
 constexpr uint8_t kCapAftertouch = 1 << 3;
+constexpr uint8_t kCapControl = 1 << 4;      // understands kModeControl and sends `pad`
 
 constexpr uint8_t kTransportPlaying = 1 << 0;
 constexpr uint8_t kTransportRecording = 1 << 1;
@@ -78,5 +82,12 @@ void handleFrame(const uint8_t* args, unsigned len, DawControlPadLogic& pads,
 
 /// Device → host hello: `F0 7D 1E 01 proto pads rows caps F7`.
 void sendHello(crosspad::IMidiOutput& out);
+
+/// Device → host `07 mode`: sent after every host hello and on every double
+/// tap, so the host paints the layout the board is actually in.
+void sendMode(crosspad::IMidiOutput& out, uint8_t mode);
+
+/// Device → host `09 pad state`: a control-mode press (1) or release (0).
+void sendPad(crosspad::IMidiOutput& out, uint8_t padIdx, bool pressed);
 
 } // namespace dawcontrol
