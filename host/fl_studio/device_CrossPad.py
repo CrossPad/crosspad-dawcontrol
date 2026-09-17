@@ -19,7 +19,8 @@ The board has two layouts, switched by a double tap on its case: keyboard
 (pads play the selected channel) and control, where a pad is a button the
 board reports as a `pad` frame and this script acts on — transport, pattern,
 metronome, undo, and mutes for channel rack channels 1–8 whose LEDs glow as
-loud as their mixer track. The board says which layout it is in with `mode`.
+loud as their mixer track is playing right now. The board says which layout
+it is in with `mode`.
 
 This file must stay self-contained: FL's embedded Python has no pip.
 """
@@ -91,9 +92,11 @@ CTRL_COLORS = {
     CTRL_METRONOME: (0x303030, 0xE0E0E0),
     CTRL_UNDO: (0x8040FF, 0x8040FF),
 }
-MIXER_VOLUME_UNITY = 0.8   # mixer.getTrackVolume() at 0 dB; louder still scales up to 1.0
+PEAK_MODE_BOTH = 2         # mixer.getTrackPeaks mode: 0 left, 1 right, 2 the louder of the two
+PEAK_STEPS = 8             # brightness is quantised so the LEDs update on level changes, not every tick
 MUTED_BRIGHTNESS = 0.06    # a muted channel keeps its hue, barely lit
-MIN_LIT_BRIGHTNESS = 0.15  # an unmuted channel with the fader down is still visibly there
+MIN_LIT_BRIGHTNESS = 0.12  # a silent, unmuted channel is still visibly there
+LED_SINGLE_MAX = 4         # up to this many changed pads go out as `led`, more as one `led_all`
 
 # --- state -------------------------------------------------------------------
 
@@ -156,15 +159,16 @@ def _scale(color, brightness):
 
 
 def _mute_pad_color(chan):
-    """Channel colour, as bright as its mixer track is loud; muted = a glimmer."""
+    """Channel colour, as bright as its mixer track's meter right now; muted = a glimmer."""
     if chan >= channels.channelCount():
         return (0, 0, 0)
     color = channels.getChannelColor(chan)
     if channels.isChannelMuted(chan):
         return _scale(color, MUTED_BRIGHTNESS)
     track = channels.getTargetFxTrack(chan)
-    volume = mixer.getTrackVolume(track) / MIXER_VOLUME_UNITY
-    return _scale(color, max(MIN_LIT_BRIGHTNESS, volume))
+    peak = min(1.0, max(0.0, mixer.getTrackPeaks(track, PEAK_MODE_BOTH)))
+    level = round(peak * PEAK_STEPS) / PEAK_STEPS
+    return _scale(color, max(MIN_LIT_BRIGHTNESS, level))
 
 
 def _control_colors():
@@ -190,6 +194,16 @@ def _push_colors(force=False):
     colors = _control_colors() if _mode == MODE_CONTROL else _pad_colors()
     if not force and colors == _last_colors:
         return
+    if not force and _last_colors is not None:
+        changed = [pad for pad in range(PAD_COUNT) if colors[pad] != _last_colors[pad]]
+        if len(changed) <= LED_SINGLE_MAX:
+            # Meters move one or two pads at a time; a full repaint per tick
+            # would be 48 bytes of SysEx for every flicker.
+            for pad in changed:
+                r, g, b = colors[pad]
+                _send(SUB_LED, [pad, r, g, b])
+            _last_colors = colors
+            return
     _last_colors = colors
     payload = []
     for r, g, b in colors:

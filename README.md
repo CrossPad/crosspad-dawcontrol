@@ -112,7 +112,7 @@ Control layout (double tap the case), row 0 at the top, LEDs lit by state:
 |---|---|
 | 0 | **Play/Pause** (green) · **Stop** (red) · **Record** (red) · **Loop mode** pattern/song (yellow when song) |
 | 1 | **Pattern −** · **Pattern +** (blue) · **Metronome** (white when on) · **Undo** (purple) |
-| 2–3 | **Mute** channel rack channels 1–8: the channel's colour, as bright as its mixer track's fader (0 dB = full), a glimmer when muted |
+| 2–3 | **Mute** channel rack channels 1–8: the channel's colour, as bright as its mixer track's meter right now (8 steps, refreshed from `OnIdle`), a glimmer when muted |
 
 ### USB audio under Wine
 
