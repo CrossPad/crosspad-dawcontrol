@@ -38,7 +38,7 @@ Catalog of record: crosspad-hil `crosspad_hil/knowledge/sysex.yaml`, `daw`.
 | `08 config` | host → device | `base_note channel(0..15)` — default 36 / channel 10 |
 | `09 pad` | device → host | `pad state(1 press / 0 release)` — control mode only; no notes or aftertouch go out there |
 | `0A ping` | host → device | no args, once a second — the board drops a host silent for 5 s and hellos every 2 s until one answers |
-| `0B tilt` | device → host | `pad value` — the board's roll since `pad` went down, 64 level, ±63 = ±30°; while a control-mode pad is held and the value changes |
+| `0B pan` | device → host | `pad value` — where on the pad the press sits (the two cells under every pad, from the STM32): 64 middle, 1 left edge, 127 right; while a control-mode pad is held and the value changes |
 | `7F bye` | host → device | host script unloading |
 
 Device → host beyond `hello`, `mode` and `pad` is plain MIDI: NoteOn/NoteOff
@@ -118,7 +118,7 @@ Control layout (double tap the case), row 0 at the top, LEDs lit by state:
 | row | pads |
 |---|---|
 | 0 | **Play/Pause** (green) · **Stop** (red) · **Record** (red) · **Loop mode** pattern/song (yellow when song) |
-| 1 | **Pattern −** · **Pattern +** (blue) · **Metronome** (white when on, blinks with the beat; hold it and lean the board left/right for the tempo, ±20 BPM per hold, snapping to multiples of 5) · **Undo** (purple) |
+| 1 | **Pattern −** · **Pattern +** (blue) · **Metronome** (white when on, blinks with the beat; press its right side for a faster tempo, left for slower — ±20 BPM at the edges, snapping to multiples of 5; a press in the middle toggles it) · **Undo** (purple) |
 | 2–3 | **Mute** channel rack channels 1–8: the channel's colour, as bright as its mixer track's meter right now (8 steps, refreshed from `OnIdle`), a glimmer when muted |
 
 ### USB audio under Wine

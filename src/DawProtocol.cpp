@@ -59,10 +59,10 @@ void sendMode(crosspad::IMidiOutput& out, uint8_t mode)
     out.sendSysEx(frame, sizeof(frame));
 }
 
-void sendTilt(crosspad::IMidiOutput& out, uint8_t padIdx, uint8_t value)
+void sendPan(crosspad::IMidiOutput& out, uint8_t padIdx, uint8_t value)
 {
     const uint8_t frame[] = {
-        CROSSPAD_SYSEX_START, CROSSPAD_SYSEX_MANUFACTURER, CROSSPAD_CMD_DAW, kSubTilt,
+        CROSSPAD_SYSEX_START, CROSSPAD_SYSEX_MANUFACTURER, CROSSPAD_CMD_DAW, kSubPan,
         (uint8_t)(padIdx & 0x7F), (uint8_t)(value & 0x7F), CROSSPAD_SYSEX_END,
     };
     out.sendSysEx(frame, sizeof(frame));

@@ -18,8 +18,9 @@
  * the point: the layout the host asked for (`config`) is applied here.
  *
  * In control mode (the board's double tap) a pad is not a note at all: the
- * press and release go to the host as `pad` frames and the host decides what
- * they do (transport, mutes…). Pressure is dropped there.
+ * press and release go to the host as `pad` frames, where on the pad the
+ * finger sits goes as `pan` frames, and the host decides what they do
+ * (transport, mutes, tempo…). Pressure is dropped there.
  *
  * Runs on the pad thread and the MIDI receive task; nothing here touches LVGL.
  */
@@ -35,6 +36,7 @@ public:
     void onPadRelease(crosspad::PadManager& padManager, uint8_t padIdx) override;
     void onPadPressure(crosspad::PadManager& padManager, uint8_t padIdx,
                        uint8_t pressure) override;
+    void onPadPan(crosspad::PadManager& padManager, uint8_t padIdx, int8_t pan) override;
 
     /// Host-assigned resting colour; repaints the pad unless it is held.
     void setHostColor(uint8_t padIdx, uint8_t r, uint8_t g, uint8_t b);
@@ -60,5 +62,6 @@ private:
     std::atomic<uint8_t> baseNote_{kDefaultBaseNote};
     std::atomic<uint8_t> channel_{kDefaultChannel};
     std::atomic<bool> control_{false};
+    std::atomic<uint8_t> lastPanSent_[16] = {};   // `pan` value on the wire, 0 = none since the press
     crosspad::PadManager* padManager_ = nullptr;
 };

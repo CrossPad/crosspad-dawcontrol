@@ -65,6 +65,7 @@ void DawControlPadLogic::onPadPress(crosspad::PadManager&, uint8_t padIdx,
 {
     if (padIdx >= 16) return;
     held_[padIdx].store(true);
+    lastPanSent_[padIdx].store(0);
     if (control_.load()) {
         dawcontrol::sendPad(crosspad::getMidiOutput(), padIdx, true);
     } else {
@@ -95,6 +96,15 @@ void DawControlPadLogic::onPadPressure(crosspad::PadManager&, uint8_t padIdx,
     crosspad::getMidiOutput().sendAftertouch(baseNote_.load() + padIdx,
                                              pressure > 127 ? 127 : pressure,
                                              channel_.load());
+}
+
+void DawControlPadLogic::onPadPan(crosspad::PadManager&, uint8_t padIdx, int8_t pan)
+{
+    if (padIdx >= 16 || !control_.load() || !held_[padIdx].load()) return;
+    const int clamped = pan > 63 ? 63 : (pan < -63 ? -63 : pan);
+    const auto value = (uint8_t)(dawcontrol::kPanCentre + clamped);
+    if (lastPanSent_[padIdx].exchange(value) == value) return;
+    dawcontrol::sendPan(crosspad::getMidiOutput(), padIdx, value);
 }
 
 void DawControlPadLogic::setHostColor(uint8_t padIdx, uint8_t r, uint8_t g, uint8_t b)

@@ -51,11 +51,11 @@ SUB_MODE = 0x07
 SUB_CONFIG = 0x08
 SUB_PAD = 0x09             # device -> host: pad state, control mode only
 SUB_PING = 0x0A            # host -> device: still here, once a second
-SUB_TILT = 0x0B            # device -> host: pad value — roll since that pad went down
+SUB_PAN = 0x0B             # device -> host: pad value — where on the pad the press sits, 64 = middle
 SUB_BYE = 0x7F
 
 PING_PERIOD_S = 1.0        # the board forgets a host silent for 5 s
-TILT_CENTRE = 64
+PAN_CENTRE = 64
 
 MODE_PADS = 0
 MODE_CONTROL = 3
@@ -108,15 +108,17 @@ MUTED_BRIGHTNESS = 0.06    # a muted channel keeps its hue, barely lit
 MIN_LIT_BRIGHTNESS = 0.12  # a silent, unmuted channel is still visibly there
 LED_SINGLE_MAX = 4         # up to this many changed pads go out as `led`, more as one `led_all`
 
-# Tempo from the metronome pad: hold it and lean the board left or right.
-# Full tilt (±30 deg on the board) is ±TEMPO_TILT_SPAN BPM around the tempo at
-# the press; values within TEMPO_SNAP_PULL of a multiple of TEMPO_SNAP_STEP
-# snap to it, everything else is whole BPM.
-TEMPO_TILT_SPAN = 20.0
+# Tempo from the metronome pad: every pad has two cells side by side and the
+# board reports where the press sits between them. Press the pad's right
+# side for faster, left for slower: the edge is ±TEMPO_PAN_SPAN BPM around the
+# tempo at the press; values within TEMPO_SNAP_PULL of a multiple of
+# TEMPO_SNAP_STEP snap to it, everything else is whole BPM.
+TEMPO_PAN_SPAN = 20.0
 TEMPO_SNAP_STEP = 5
 TEMPO_SNAP_PULL = 1.5
 TEMPO_MIN, TEMPO_MAX = 20.0, 999.0
-TILT_DEAD_ZONE = 3         # tilt units either side of centre that still count as "not moved"
+PAN_DEAD_ZONE = 12         # pan units either side of the middle that still count as "pressed in the middle"
+PAN_SETTLE_S = 0.1         # the cell the finger lands on first crosses early: the pan is noise until both carry the press
 
 # --- state -------------------------------------------------------------------
 
@@ -297,24 +299,26 @@ def _set_tempo(bpm):
     general.processRECEvent(midi.REC_Tempo, int(round(bpm * 1000)), flags)
 
 
-def _control_tilt(pad, value):
-    """The board leaned while `pad` is held: on the metronome pad that is the tempo."""
+def _control_pan(pad, value):
+    """The press on `pad` sits at `value` (1 left .. 127 right): on the metronome pad that is the tempo."""
     global _metro_hold
     if pad != CTRL_METRONOME or _metro_hold is None:
         return
-    offset = value - TILT_CENTRE
-    if abs(offset) > TILT_DEAD_ZONE:
+    if time.monotonic() - _metro_hold["t0"] < PAN_SETTLE_S:
+        return
+    offset = value - PAN_CENTRE
+    if abs(offset) > PAN_DEAD_ZONE:
         _metro_hold["moved"] = True
     if not _metro_hold["moved"]:
         return
-    bpm = _snap_tempo(_metro_hold["tempo0"] + offset / 63.0 * TEMPO_TILT_SPAN)
+    bpm = _snap_tempo(_metro_hold["tempo0"] + offset / 63.0 * TEMPO_PAN_SPAN)
     if abs(bpm - mixer.getCurrentTempo() / 1000.0) >= 0.5:
         _set_tempo(bpm)
         _push_text()
 
 
 def _control_release(pad):
-    """The metronome pad toggles on release, and only when the hold was not a tempo gesture."""
+    """The metronome pad toggles on release, and only when the press stayed in the middle."""
     global _metro_hold
     if pad != CTRL_METRONOME or _metro_hold is None:
         return
@@ -329,7 +333,8 @@ def _control_press(pad):
     """One control-layout pad went down. Buttons are momentary; the metronome pad acts on release."""
     global _metro_hold
     if pad == CTRL_METRONOME:
-        _metro_hold = {"tempo0": mixer.getCurrentTempo() / 1000.0, "moved": False}
+        _metro_hold = {"tempo0": mixer.getCurrentTempo() / 1000.0, "moved": False,
+                       "t0": time.monotonic()}
         return
     if pad == CTRL_PLAY:
         transport.start()
@@ -383,9 +388,9 @@ def OnSysEx(event):
             else:
                 _control_release(data[4])
         event.handled = True
-    elif sub == SUB_TILT:
+    elif sub == SUB_PAN:
         if _connected and len(data) >= 6:
-            _control_tilt(data[4], data[5])
+            _control_pan(data[4], data[5])
         event.handled = True
     elif sub == SUB_HELLO and len(data) >= 8:
         pads = data[5]

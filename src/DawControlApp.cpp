@@ -27,7 +27,6 @@
 #include "crosspad/midi/IMidiOutput.hpp"
 #include "crosspad/pad/PadManager.hpp"
 #include "crosspad/platform/IClock.hpp"
-#include "crosspad/platform/IImu.hpp"
 #include "crosspad/platform/PlatformServices.hpp"
 #include "crosspad/protocol/Stm32MessageHandler.hpp"
 #include "crosspad/status/CrosspadStatus.hpp"
@@ -73,9 +72,6 @@ dawcontrol::ScreenState s_screen;
 crosspad::SubscriptionHandle s_motionSub = nullptr;   // double tap flips keyboard/control
 std::atomic<int64_t> s_lastHostUs{0};                 // stamped on every host frame
 uint32_t s_helloRetryTicksLeft = 0;
-int s_tiltPad = -1;                                    // control-mode pad whose hold is being tilted
-float s_tiltRollAtPress = 0.0f;
-uint8_t s_tiltLastSent = dawcontrol::kTiltCentre;
 
 #ifdef DAWCONTROL_USE_ENCODER
 lv_group_t* s_encGroup = nullptr;
@@ -212,40 +208,9 @@ void watch_host()
     }
 }
 
-// Hold a control-mode pad and lean the board left or right: the roll since
-// the press goes to the host as `tilt`, on the timer, only when it changes.
-// One pad at a time — the first one found held; a release ends it and the
-// host sees that through the pad's own release frame.
-void watch_tilt()
-{
-    if (!s_padLogic || !s_padLogic->controlMode()) { s_tiltPad = -1; return; }
-    if (s_tiltPad >= 0 && !s_padLogic->held((uint8_t)s_tiltPad)) s_tiltPad = -1;
-    crosspad::ImuData d;
-    if (s_tiltPad < 0) {
-        for (uint8_t i = 0; i < dawcontrol::kPadCount; ++i) {
-            if (!s_padLogic->held(i)) continue;
-            if (!crosspad::getImu().getData(d)) return;
-            s_tiltPad = i;
-            s_tiltRollAtPress = d.roll;
-            s_tiltLastSent = dawcontrol::kTiltCentre;
-            return;
-        }
-        return;
-    }
-    if (!crosspad::getImu().getData(d)) return;
-    float rel = (d.roll - s_tiltRollAtPress) / dawcontrol::kTiltSpanDeg * 63.0f;
-    if (rel > 63.0f) rel = 63.0f;
-    if (rel < -63.0f) rel = -63.0f;
-    const auto value = (uint8_t)(dawcontrol::kTiltCentre + (int)rel);
-    if (value == s_tiltLastSent) return;
-    s_tiltLastSent = value;
-    dawcontrol::sendTilt(crosspad::getMidiOutput(), (uint8_t)s_tiltPad, value);
-}
-
 void tick_cb(lv_timer_t*)
 {
     watch_host();
-    watch_tilt();
     if (s_screen.dirty.exchange(false)) redraw();
     if (s_hostRowTicksLeft == 0 || --s_hostRowTicksLeft == 0) {
         s_hostRowTicksLeft = kHostRowTicks;
@@ -558,7 +523,6 @@ void DawControl_destroy(lv_obj_t* root)
     s_fwLabel = nullptr;
     s_hostRowTicksLeft = 0;
     s_helloRetryTicksLeft = 0;
-    s_tiltPad = -1;
     s_beatDot = nullptr;
     for (auto& b : s_inputBtns) b = nullptr;
     s_usbBtn = nullptr;

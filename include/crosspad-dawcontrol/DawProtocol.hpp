@@ -27,8 +27,7 @@ constexpr uint8_t kProtoVersion = 1;
 constexpr uint32_t kHostTimeoutMs = 5000;    // silence after which the host is gone
 constexpr uint32_t kHelloRetryMs = 2000;     // unsolicited hello while no host answers
 constexpr uint32_t kHelloEchoGuardMs = 1000; // a host hello this soon after our own is the answer to it
-constexpr float kTiltSpanDeg = 30.0f;        // roll that reaches full scale (64 ± 63)
-constexpr uint8_t kTiltCentre = 64;
+constexpr uint8_t kPanCentre = 64;           // `pan` value for a press in the middle of the pad
 constexpr uint8_t kPadCount = 16;
 constexpr uint8_t kTextRows = 3;
 constexpr size_t kTextCols = 24;
@@ -44,7 +43,7 @@ enum Sub : uint8_t {
     kSubConfig = 0x08,
     kSubPad = 0x09,       // device -> host: pad state, control mode only
     kSubPing = 0x0A,      // host -> device: still here (no args, no reply)
-    kSubTilt = 0x0B,      // device -> host: pad value — roll since that pad went down, control mode
+    kSubPan = 0x0B,       // device -> host: pad value — where on the pad the press sits, control mode
     kSubBye = 0x7F,
 };
 
@@ -109,10 +108,11 @@ void sendMode(crosspad::IMidiOutput& out, uint8_t mode);
 /// Device → host `09 pad state`: a control-mode press (1) or release (0).
 void sendPad(crosspad::IMidiOutput& out, uint8_t padIdx, bool pressed);
 
-/// Device → host `0B tilt pad value`: the board's roll relative to where it
-/// was when `pad` went down, kTiltCentre level, ±63 = ±kTiltSpanDeg. Sent
-/// while a control-mode pad is held and the value changes; the host turns it
-/// into whatever that pad controls (the FL script: tempo on the metronome pad).
-void sendTilt(crosspad::IMidiOutput& out, uint8_t padIdx, uint8_t value);
+/// Device → host `0B pan pad value`: the left/right balance of the press on
+/// `pad` — the two cells under every pad, reported by the STM32 — kPanCentre
+/// in the middle, 1 at the left edge, 127 at the right. Sent while a
+/// control-mode pad is held and the value changes; the host turns it into
+/// whatever that pad controls (the FL script: tempo on the metronome pad).
+void sendPan(crosspad::IMidiOutput& out, uint8_t padIdx, uint8_t value);
 
 } // namespace dawcontrol
