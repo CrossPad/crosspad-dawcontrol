@@ -117,6 +117,14 @@ LED_SINGLE_MAX = 4         # up to this many changed pads go out as `led`, more 
 TEMPO_RATE_MAX = 10.0
 TEMPO_SNAP_STEP = 5
 TEMPO_DETENT_S = 0.4
+PAN_FULL = 45              # |pan offset| that counts as the edge — a real finger settles around 50, not 63
+# A long hold at the edge speeds up: after TEMPO_ACCEL_AFTER_S the rate
+# climbs to TEMPO_ACCEL_MAX times over TEMPO_ACCEL_RAMP_S, and the detents
+# rest correspondingly shorter. Easing off the edge drops back at once.
+TEMPO_ACCEL_AFTER_S = 0.8
+TEMPO_ACCEL_RAMP_S = 1.5
+TEMPO_ACCEL_MAX = 4.0
+TEMPO_ACCEL_LEAN = 0.9     # lean (0..1) from which the hold counts as "at the edge"
 TEMPO_MIN, TEMPO_MAX = 20.0, 999.0
 PAN_DEAD_ZONE = 12         # pan units either side of the middle that still count as "pressed in the middle"
 PAN_SETTLE_S = 0.1         # the cell the finger lands on first crosses early: the pan is noise until both carry the press
@@ -300,11 +308,12 @@ def _control_pan(pad, value):
     offset = value - PAN_CENTRE
     if abs(offset) <= PAN_DEAD_ZONE:
         _metro_hold["rate"] = 0.0
+        _metro_hold["lean"] = 0.0
         return
     _metro_hold["moved"] = True
-    span = 63.0 - PAN_DEAD_ZONE
-    lean = (abs(offset) - PAN_DEAD_ZONE) / span
-    _metro_hold["rate"] = (1.0 if offset > 0 else -1.0) * min(1.0, lean) * TEMPO_RATE_MAX
+    lean = min(1.0, (abs(offset) - PAN_DEAD_ZONE) / float(PAN_FULL - PAN_DEAD_ZONE))
+    _metro_hold["lean"] = lean
+    _metro_hold["rate"] = (1.0 if offset > 0 else -1.0) * lean * TEMPO_RATE_MAX
 
 
 def _run_tempo(now):
@@ -314,10 +323,18 @@ def _run_tempo(now):
         return
     dt = now - h["last"]
     h["last"] = now
+    if h["lean"] >= TEMPO_ACCEL_LEAN:
+        h["edge_s"] += dt
+        if h["edge_s"] > TEMPO_ACCEL_AFTER_S:
+            ramp = min(1.0, (h["edge_s"] - TEMPO_ACCEL_AFTER_S) / TEMPO_ACCEL_RAMP_S)
+            h["accel"] = 1.0 + ramp * (TEMPO_ACCEL_MAX - 1.0)
+    else:
+        h["edge_s"] = 0.0
+        h["accel"] = 1.0
     if h["rate"] == 0.0 or now < h["detent_until"]:
         return
     before = h["tempo"]
-    after = max(TEMPO_MIN, min(TEMPO_MAX, before + h["rate"] * dt))
+    after = max(TEMPO_MIN, min(TEMPO_MAX, before + h["rate"] * h["accel"] * dt))
     # The next multiple of the step in the direction of travel is a detent:
     # land on it exactly and rest there.
     # `before` is either exactly on a detent (it was landed on) or clearly
@@ -327,12 +344,12 @@ def _run_tempo(now):
         detent = (math.floor(before / TEMPO_SNAP_STEP) + 1) * TEMPO_SNAP_STEP
         if after >= detent - 1e-6:
             after = float(detent)
-            h["detent_until"] = now + TEMPO_DETENT_S
+            h["detent_until"] = now + TEMPO_DETENT_S / h["accel"]
     else:
         detent = (math.ceil(before / TEMPO_SNAP_STEP) - 1) * TEMPO_SNAP_STEP
         if after <= detent + 1e-6:
             after = float(detent)
-            h["detent_until"] = now + TEMPO_DETENT_S
+            h["detent_until"] = now + TEMPO_DETENT_S / h["accel"]
     h["tempo"] = after
     if round(after) != round(before):
         _set_tempo(round(after))
@@ -356,8 +373,9 @@ def _control_press(pad):
     global _metro_hold
     if pad == CTRL_METRONOME:
         now = time.monotonic()
-        _metro_hold = {"tempo": mixer.getCurrentTempo() / 1000.0, "rate": 0.0, "moved": False,
-                       "t0": now, "last": now, "detent_until": 0.0}
+        _metro_hold = {"tempo": mixer.getCurrentTempo() / 1000.0, "rate": 0.0, "lean": 0.0,
+                       "moved": False, "t0": now, "last": now, "detent_until": 0.0,
+                       "edge_s": 0.0, "accel": 1.0}
         return
     if pad == CTRL_PLAY:
         transport.start()
