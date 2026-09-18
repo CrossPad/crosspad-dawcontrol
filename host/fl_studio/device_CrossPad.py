@@ -25,7 +25,6 @@ it is in with `mode`.
 This file must stay self-contained: FL's embedded Python has no pip.
 """
 
-import math
 import time
 
 import channels
@@ -112,15 +111,14 @@ LED_SINGLE_MAX = 4         # up to this many changed pads go out as `led`, more 
 # Tempo from the metronome pad: every pad has two cells side by side and the
 # board reports where the press sits between them. How far off the middle
 # the finger is sets how fast the tempo moves — right up, left down, up to
-# TEMPO_RATE_MAX BPM/s at the edge — and multiples of TEMPO_SNAP_STEP are
-# detents: the tempo rests there for TEMPO_DETENT_S before moving on.
+# TEMPO_RATE_MAX BPM/s at the edge — and letting go lands it on the nearest
+# multiple of TEMPO_SNAP_STEP.
 TEMPO_RATE_MAX = 10.0
 TEMPO_SNAP_STEP = 5
-TEMPO_DETENT_S = 0.4
-PAN_FULL = 45              # |pan offset| that counts as the edge — a real finger settles around 50, not 63
+PAN_FULL = 40              # |pan offset| that counts as the edge — a finger cannot reach 63
 # A long hold at the edge speeds up: after TEMPO_ACCEL_AFTER_S the rate
-# climbs to TEMPO_ACCEL_MAX times over TEMPO_ACCEL_RAMP_S, and the detents
-# rest correspondingly shorter. Easing off the edge drops back at once.
+# climbs to TEMPO_ACCEL_MAX times over TEMPO_ACCEL_RAMP_S. Easing off the
+# edge drops back at once.
 TEMPO_ACCEL_AFTER_S = 0.8
 TEMPO_ACCEL_RAMP_S = 1.5
 TEMPO_ACCEL_MAX = 4.0
@@ -139,7 +137,7 @@ _connected = False
 _mode = MODE_PADS
 _last_ping = 0.0
 _metro_flash_until = 0.0   # the metronome pad shows the beat colour until then
-_metro_hold = None         # while the metronome pad is down: rate, running tempo, detent — see _control_press
+_metro_hold = None         # while the metronome pad is down: rate, running tempo, acceleration — see _control_press
 
 
 # --- frame helpers -----------------------------------------------------------
@@ -317,7 +315,7 @@ def _control_pan(pad, value):
 
 
 def _run_tempo(now):
-    """OnIdle: move the tempo at the held rate, resting on every multiple of TEMPO_SNAP_STEP."""
+    """OnIdle: move the tempo at the held rate, faster the longer the edge is held."""
     h = _metro_hold
     if h is None:
         return
@@ -331,25 +329,10 @@ def _run_tempo(now):
     else:
         h["edge_s"] = 0.0
         h["accel"] = 1.0
-    if h["rate"] == 0.0 or now < h["detent_until"]:
+    if h["rate"] == 0.0:
         return
     before = h["tempo"]
     after = max(TEMPO_MIN, min(TEMPO_MAX, before + h["rate"] * h["accel"] * dt))
-    # The next multiple of the step in the direction of travel is a detent:
-    # land on it exactly and rest there.
-    # `before` is either exactly on a detent (it was landed on) or clearly
-    # off one, so plain floor/ceil find the next; the landing test forgives
-    # the float drift of the integration so the tempo does end up exact.
-    if h["rate"] > 0:
-        detent = (math.floor(before / TEMPO_SNAP_STEP) + 1) * TEMPO_SNAP_STEP
-        if after >= detent - 1e-6:
-            after = float(detent)
-            h["detent_until"] = now + TEMPO_DETENT_S / h["accel"]
-    else:
-        detent = (math.ceil(before / TEMPO_SNAP_STEP) - 1) * TEMPO_SNAP_STEP
-        if after <= detent + 1e-6:
-            after = float(detent)
-            h["detent_until"] = now + TEMPO_DETENT_S / h["accel"]
     h["tempo"] = after
     if round(after) != round(before):
         _set_tempo(round(after))
@@ -362,8 +345,13 @@ def _control_release(pad):
     if pad != CTRL_METRONOME or _metro_hold is None:
         return
     moved = _metro_hold["moved"]
+    tempo = _metro_hold["tempo"]
     _metro_hold = None
-    if not moved:
+    if moved:
+        snapped = round(tempo / TEMPO_SNAP_STEP) * TEMPO_SNAP_STEP
+        _set_tempo(max(TEMPO_MIN, min(TEMPO_MAX, snapped)))
+        _push_text()
+    else:
         transport.globalTransport(FPT_METRONOME, 1)
         _push_colors()
 
@@ -374,8 +362,7 @@ def _control_press(pad):
     if pad == CTRL_METRONOME:
         now = time.monotonic()
         _metro_hold = {"tempo": mixer.getCurrentTempo() / 1000.0, "rate": 0.0, "lean": 0.0,
-                       "moved": False, "t0": now, "last": now, "detent_until": 0.0,
-                       "edge_s": 0.0, "accel": 1.0}
+                       "moved": False, "t0": now, "last": now, "edge_s": 0.0, "accel": 1.0}
         return
     if pad == CTRL_PLAY:
         transport.start()
