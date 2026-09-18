@@ -25,6 +25,7 @@ it is in with `mode`.
 This file must stay self-contained: FL's embedded Python has no pip.
 """
 
+import math
 import time
 
 import channels
@@ -109,13 +110,13 @@ MIN_LIT_BRIGHTNESS = 0.12  # a silent, unmuted channel is still visibly there
 LED_SINGLE_MAX = 4         # up to this many changed pads go out as `led`, more as one `led_all`
 
 # Tempo from the metronome pad: every pad has two cells side by side and the
-# board reports where the press sits between them. Press the pad's right
-# side for faster, left for slower: the edge is ±TEMPO_PAN_SPAN BPM around the
-# tempo at the press; values within TEMPO_SNAP_PULL of a multiple of
-# TEMPO_SNAP_STEP snap to it, everything else is whole BPM.
-TEMPO_PAN_SPAN = 20.0
+# board reports where the press sits between them. How far off the middle
+# the finger is sets how fast the tempo moves — right up, left down, up to
+# TEMPO_RATE_MAX BPM/s at the edge — and multiples of TEMPO_SNAP_STEP are
+# detents: the tempo rests there for TEMPO_DETENT_S before moving on.
+TEMPO_RATE_MAX = 10.0
 TEMPO_SNAP_STEP = 5
-TEMPO_SNAP_PULL = 1.5
+TEMPO_DETENT_S = 0.4
 TEMPO_MIN, TEMPO_MAX = 20.0, 999.0
 PAN_DEAD_ZONE = 12         # pan units either side of the middle that still count as "pressed in the middle"
 PAN_SETTLE_S = 0.1         # the cell the finger lands on first crosses early: the pan is noise until both carry the press
@@ -130,7 +131,7 @@ _connected = False
 _mode = MODE_PADS
 _last_ping = 0.0
 _metro_flash_until = 0.0   # the metronome pad shows the beat colour until then
-_metro_hold = None         # {"tempo0": BPM at the press, "moved": bool} while the metronome pad is down
+_metro_hold = None         # while the metronome pad is down: rate, running tempo, detent — see _control_press
 
 
 # --- frame helpers -----------------------------------------------------------
@@ -285,35 +286,56 @@ def _set_mode(mode):
     _push_text()
 
 
-def _snap_tempo(raw):
-    """Whole BPM, pulled onto multiples of TEMPO_SNAP_STEP when close, clamped to FL's range."""
-    raw = max(TEMPO_MIN, min(TEMPO_MAX, raw))
-    step = round(raw / TEMPO_SNAP_STEP) * TEMPO_SNAP_STEP
-    if abs(raw - step) <= TEMPO_SNAP_PULL:
-        return float(step)
-    return float(round(raw))
-
-
 def _set_tempo(bpm):
     flags = midi.REC_Control | midi.REC_UpdateControl
     general.processRECEvent(midi.REC_Tempo, int(round(bpm * 1000)), flags)
 
 
 def _control_pan(pad, value):
-    """The press on `pad` sits at `value` (1 left .. 127 right): on the metronome pad that is the tempo."""
-    global _metro_hold
+    """The press on `pad` sits at `value` (1 left .. 127 right): on the metronome pad that sets the tempo's rate."""
     if pad != CTRL_METRONOME or _metro_hold is None:
         return
     if time.monotonic() - _metro_hold["t0"] < PAN_SETTLE_S:
         return
     offset = value - PAN_CENTRE
-    if abs(offset) > PAN_DEAD_ZONE:
-        _metro_hold["moved"] = True
-    if not _metro_hold["moved"]:
+    if abs(offset) <= PAN_DEAD_ZONE:
+        _metro_hold["rate"] = 0.0
         return
-    bpm = _snap_tempo(_metro_hold["tempo0"] + offset / 63.0 * TEMPO_PAN_SPAN)
-    if abs(bpm - mixer.getCurrentTempo() / 1000.0) >= 0.5:
-        _set_tempo(bpm)
+    _metro_hold["moved"] = True
+    span = 63.0 - PAN_DEAD_ZONE
+    lean = (abs(offset) - PAN_DEAD_ZONE) / span
+    _metro_hold["rate"] = (1.0 if offset > 0 else -1.0) * min(1.0, lean) * TEMPO_RATE_MAX
+
+
+def _run_tempo(now):
+    """OnIdle: move the tempo at the held rate, resting on every multiple of TEMPO_SNAP_STEP."""
+    h = _metro_hold
+    if h is None:
+        return
+    dt = now - h["last"]
+    h["last"] = now
+    if h["rate"] == 0.0 or now < h["detent_until"]:
+        return
+    before = h["tempo"]
+    after = max(TEMPO_MIN, min(TEMPO_MAX, before + h["rate"] * dt))
+    # The next multiple of the step in the direction of travel is a detent:
+    # land on it exactly and rest there.
+    # `before` is either exactly on a detent (it was landed on) or clearly
+    # off one, so plain floor/ceil find the next; the landing test forgives
+    # the float drift of the integration so the tempo does end up exact.
+    if h["rate"] > 0:
+        detent = (math.floor(before / TEMPO_SNAP_STEP) + 1) * TEMPO_SNAP_STEP
+        if after >= detent - 1e-6:
+            after = float(detent)
+            h["detent_until"] = now + TEMPO_DETENT_S
+    else:
+        detent = (math.ceil(before / TEMPO_SNAP_STEP) - 1) * TEMPO_SNAP_STEP
+        if after <= detent + 1e-6:
+            after = float(detent)
+            h["detent_until"] = now + TEMPO_DETENT_S
+    h["tempo"] = after
+    if round(after) != round(before):
+        _set_tempo(round(after))
         _push_text()
 
 
@@ -333,8 +355,9 @@ def _control_press(pad):
     """One control-layout pad went down. Buttons are momentary; the metronome pad acts on release."""
     global _metro_hold
     if pad == CTRL_METRONOME:
-        _metro_hold = {"tempo0": mixer.getCurrentTempo() / 1000.0, "moved": False,
-                       "t0": time.monotonic()}
+        now = time.monotonic()
+        _metro_hold = {"tempo": mixer.getCurrentTempo() / 1000.0, "rate": 0.0, "moved": False,
+                       "t0": now, "last": now, "detent_until": 0.0}
         return
     if pad == CTRL_PLAY:
         transport.start()
@@ -420,6 +443,7 @@ def OnIdle():
     global _last_ping, _metro_flash_until
     if _connected:
         now = time.monotonic()
+        _run_tempo(now)
         _push_text()
         if _mode == MODE_CONTROL:
             if _metro_flash_until and now >= _metro_flash_until:
