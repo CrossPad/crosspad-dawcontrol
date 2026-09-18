@@ -111,8 +111,9 @@ LED_SINGLE_MAX = 4         # up to this many changed pads go out as `led`, more 
 # Tempo from the metronome pad: every pad has two cells side by side and the
 # board reports where the press sits between them. How far off the middle
 # the finger is sets how fast the tempo moves — right up, left down, up to
-# TEMPO_RATE_MAX BPM/s at the edge — and letting go lands it on the nearest
-# multiple of TEMPO_SNAP_STEP.
+# TEMPO_RATE_MAX BPM/s at the edge. Letting go after a long, accelerated run
+# lands on the nearest multiple of TEMPO_SNAP_STEP; after a short one, on
+# the whole BPM it reached.
 TEMPO_RATE_MAX = 10.0
 TEMPO_SNAP_STEP = 5
 PAN_FULL = 55              # |pan offset| that counts as the edge: one cell loaded, the other free
@@ -313,6 +314,8 @@ def _control_pan(pad, value):
         return
     _metro_hold["moved"] = True
     lean = min(1.0, (abs(offset) - PAN_DEAD_ZONE) / float(PAN_FULL - PAN_DEAD_ZONE))
+    if _metro_hold["lean"] < TEMPO_ACCEL_LEAN <= lean:
+        _metro_hold["last"] = time.monotonic()   # the edge time starts now, not at the press
     _metro_hold["lean"] = lean
     _metro_hold["rate"] = (1.0 if offset > 0 else -1.0) * lean * TEMPO_RATE_MAX
 
@@ -349,10 +352,16 @@ def _control_release(pad):
         return
     moved = _metro_hold["moved"]
     tempo = _metro_hold["tempo"]
+    fast = _metro_hold["edge_s"] > TEMPO_ACCEL_AFTER_S
     _metro_hold = None
     if moved:
-        snapped = round(tempo / TEMPO_SNAP_STEP) * TEMPO_SNAP_STEP
-        _set_tempo(max(TEMPO_MIN, min(TEMPO_MAX, snapped)))
+        # A long run at the edge was aiming for a round number; a short,
+        # careful one was aiming for exactly where it stopped (69 is a tempo).
+        if fast:
+            landed = round(tempo / TEMPO_SNAP_STEP) * TEMPO_SNAP_STEP
+        else:
+            landed = round(tempo)
+        _set_tempo(max(TEMPO_MIN, min(TEMPO_MAX, landed)))
         _push_text()
     else:
         transport.globalTransport(FPT_METRONOME, 1)

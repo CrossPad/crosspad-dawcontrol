@@ -12,7 +12,7 @@
     "crosspad-gui": ">=1.3.0"
   },
   "changelog": [
-    "0.3.0: control layout on a double tap of the case — pads report as `pad` frames, FL script maps them to transport/pattern/metronome/undo and eight channel mutes lit by the mixer track meter; metronome pad blinks with the beat and runs the tempo at a rate set by where it is pressed, snapping to a multiple of 5 on release (`pan`, core 1.17 onPadPan); host `ping`, 5 s host timeout with hello retry; device->host `mode`",
+    "0.3.0: control layout on a double tap of the case — pads report as `pad` frames, FL script maps them to transport/pattern/metronome/undo and eight channel mutes lit by the mixer track meter; metronome pad blinks with the beat and runs the tempo at a rate set by where it is pressed, snapping to a multiple of 5 only after a long run (`pan`, core 1.17 onPadPan); host `ping`, 5 s host timeout with hello retry; device->host `mode`",
     "0.2.0: host row (CPU, RAM, clock) and firmware row, fed by crosspad-hil's MIDI hub over companion SysEx",
     "0.1.0: pads to the host, LED/text/beat/transport from it over the DAW SysEx protocol; FL Studio script"
   ]
