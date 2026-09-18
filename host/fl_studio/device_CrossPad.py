@@ -115,7 +115,7 @@ LED_SINGLE_MAX = 4         # up to this many changed pads go out as `led`, more 
 # multiple of TEMPO_SNAP_STEP.
 TEMPO_RATE_MAX = 10.0
 TEMPO_SNAP_STEP = 5
-PAN_FULL = 40              # |pan offset| that counts as the edge — a finger cannot reach 63
+PAN_FULL = 55              # |pan offset| that counts as the edge: one cell loaded, the other free
 # A long hold at the edge speeds up: after TEMPO_ACCEL_AFTER_S the rate
 # climbs to TEMPO_ACCEL_MAX times over TEMPO_ACCEL_RAMP_S. Easing off the
 # edge drops back at once.
@@ -124,7 +124,10 @@ TEMPO_ACCEL_RAMP_S = 1.5
 TEMPO_ACCEL_MAX = 4.0
 TEMPO_ACCEL_LEAN = 0.9     # lean (0..1) from which the hold counts as "at the edge"
 TEMPO_MIN, TEMPO_MAX = 20.0, 999.0
-PAN_DEAD_ZONE = 12         # pan units either side of the middle that still count as "pressed in the middle"
+# The cells saturate under any firm press, so a finger covering both halves
+# reads within ±15 whatever it does; only a press that leaves one cell free
+# carries left/right. Everything inside the dead zone is "the middle".
+PAN_DEAD_ZONE = 30
 PAN_SETTLE_S = 0.1         # the cell the finger lands on first crosses early: the pan is noise until both carry the press
 
 # --- state -------------------------------------------------------------------

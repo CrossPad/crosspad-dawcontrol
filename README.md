@@ -118,7 +118,7 @@ Control layout (double tap the case), row 0 at the top, LEDs lit by state:
 | row | pads |
 |---|---|
 | 0 | **Play/Pause** (green) · **Stop** (red) · **Record** (red) · **Loop mode** pattern/song (yellow when song) |
-| 1 | **Pattern −** · **Pattern +** (blue) · **Metronome** (white when on, blinks with the beat; hold it off-centre and the tempo runs — right up, left down, 10 BPM/s at the edge, up to 4× after a second there — and lands on the nearest multiple of 5 when you let go; a press in the middle toggles it) · **Undo** (purple) |
+| 1 | **Pattern −** · **Pattern +** (blue) · **Metronome** (white when on, blinks with the beat; press its right edge — so only that half of the pad is loaded — and the tempo runs up, left edge down, 10 BPM/s, up to 4× after a second; a finger covering both halves reads as the middle; letting go lands on the nearest multiple of 5; a press in the middle toggles it) · **Undo** (purple) |
 | 2–3 | **Mute** channel rack channels 1–8: the channel's colour, as bright as its mixer track's meter right now (8 steps, refreshed from `OnIdle`), a glimmer when muted |
 
 ### USB audio under Wine
