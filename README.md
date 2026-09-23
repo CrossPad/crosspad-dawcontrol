@@ -67,9 +67,15 @@ encoder is emitted by the firmware itself on channel 1: CC 1 = detent index
    Studio/Settings/Hardware/CrossPad/` (Bottles keeps the prefix under
    `~/.var/app/com.usebottles.bottles/data/bottles/bottles/<bottle>/`). FL
    discovers new script folders only at startup.
-2. FL → Options → MIDI Settings: pick the CrossPad port as input **and**
-   output, controller type **CrossPad**, enable, and give both the same
-   port number — the script's `device.isAssigned()` is false otherwise.
+2. On Windows, start FL with the board plugged in and that is all: the
+   script's `supportedDevices` header matches the "Crosspad" port and
+   "Auto accept detected controller" (on by default) enables it with
+   controller type **CrossPad** and one port number for input and output.
+   The board shows FL's rows once FL's welcome window is closed — while it is
+   open FL receives the board's hello but does not send its answer.
+   Otherwise, FL → Options → MIDI Settings: pick the CrossPad port as input
+   **and** output, controller type **CrossPad**, enable, and give both the
+   same port number — the script's `device.isAssigned()` is false otherwise.
    Send master sync is not needed.
    **Under Wine, pick "CrossPad Hub" instead of the board** (both
    directions): `crosspad-hil midi hub install` keeps that port pair alive

@@ -1,13 +1,17 @@
 # name=CrossPad
 # url=https://github.com/CrossPad/crosspad-dawcontrol
+# supportedDevices=Crosspad,Crosspad MIDI 1,CrossPad
 """
 FL Studio MIDI Controller Script for CrossPad running the DAW Control app.
 
 Install: copy this directory (as `CrossPad/`) into
   <Documents>/Image-Line/FL Studio/Settings/Hardware/
 (under Wine: ~/.wine/drive_c/users/<you>/Documents/Image-Line/FL Studio/Settings/Hardware/CrossPad/),
-then in FL: Options -> MIDI Settings -> select the CrossPad port for both input
-and output, controller type "CrossPad", and enable it.
+then start FL with the board plugged in: the header above lets FL match the
+port, and with "Auto accept detected controller" (on by default) it enables
+the input, sets controller type "CrossPad" and gives input and output the same
+port on its own. Otherwise: Options -> MIDI Settings -> select the CrossPad port
+for both input and output, controller type "CrossPad", and enable it.
 
 The device side is generic: it plays notes and shows what it is told. This
 script is the FL-specific half — it reads the selected channel, FPC pad
