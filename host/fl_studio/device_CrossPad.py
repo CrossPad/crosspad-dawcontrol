@@ -527,6 +527,8 @@ def OnMidiMsg(event):
 try:
     import flbridge as _bridge
     print("CrossPad: FL Bridge module loaded")
+except ModuleNotFoundError:   # the usual case: no bench bridge beside the script
+    _bridge = None
 except Exception as _e:   # noqa: BLE001 — FL's script host dies on a raised import error
     _bridge = None
     print("CrossPad: FL Bridge not loaded: " + repr(_e))
