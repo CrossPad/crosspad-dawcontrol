@@ -44,10 +44,11 @@ enum Sub : uint8_t {
     kSubPad = 0x09,       // device -> host: pad state, control mode only
     kSubPing = 0x0A,      // host -> device: still here (no args, no reply)
     kSubPan = 0x0B,       // device -> host: pad value — where on the pad the press sits, control mode
+    kSubLaunch = 0x0C,    // device -> hub: daw_id — start that DAW; the hub consumes it
     kSubBye = 0x7F,
 };
 
-enum DawId : uint8_t { kDawOther = 0, kDawFlStudio = 1, kDawAbleton = 2 };
+enum DawId : uint8_t { kDawOther = 0, kDawFlStudio = 1, kDawAbleton = 2, kDawReaper = 3 };
 // 0..2 are what the host shows; kModeControl is the board's own: pads stop
 // playing notes and report presses as `pad` frames for the host to act on.
 enum PadMode : uint8_t { kModePads = 0, kModeSteps = 1, kModeClips = 2, kModeControl = 3 };
@@ -114,5 +115,10 @@ void sendPad(crosspad::IMidiOutput& out, uint8_t padIdx, bool pressed);
 /// control-mode pad is held and the value changes; the host turns it into
 /// whatever that pad controls (the FL script: tempo on the metronome pad).
 void sendPan(crosspad::IMidiOutput& out, uint8_t padIdx, uint8_t value);
+
+/// Device → hub `0C daw_id`: ask the MIDI hub to start that DAW. Only for a
+/// DAW the hub reported installed and not running (HOST_INFO `daws=`); the
+/// hub consumes the frame and never forwards it to a DAW.
+void sendLaunch(crosspad::IMidiOutput& out, uint8_t dawId);
 
 } // namespace dawcontrol

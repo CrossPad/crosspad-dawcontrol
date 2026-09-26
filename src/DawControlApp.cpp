@@ -55,6 +55,7 @@ constexpr uint32_t kBeatFlashTicks = 3;   // 150 ms of dot per beat
 constexpr uint32_t kHostRowTicks = 1000 / kTickMs;   // host stats and clock, once a second
 constexpr uint32_t kHelloRetryTicks = dawcontrol::kHelloRetryMs / kTickMs;
 constexpr uint32_t kMbPerGb = 1024;
+constexpr int64_t kLaunchWaitUs = 90LL * 1000 * 1000;   // FL under Wine can take a minute to come up
 
 lv_obj_t* s_root = nullptr;
 lv_obj_t* s_hostLabel = nullptr;
@@ -73,6 +74,15 @@ crosspad::SubscriptionHandle s_motionSub = nullptr;   // double tap flips keyboa
 std::atomic<int64_t> s_lastHostUs{0};                 // stamped on every host frame
 uint32_t s_helloRetryTicksLeft = 0;
 
+// DAWs the hub can start, one button each, in daw_id order.
+constexpr uint8_t kLaunchable[] = {dawcontrol::kDawFlStudio, dawcontrol::kDawAbleton,
+                                   dawcontrol::kDawReaper};
+constexpr uint8_t kLaunchableCount = sizeof(kLaunchable);
+lv_obj_t* s_launchBar = nullptr;
+lv_obj_t* s_launchBtns[kLaunchableCount] = {};
+uint8_t s_launchingDaw = dawcontrol::kDawOther;   // pressed, not yet up
+int64_t s_launchingSinceUs = 0;
+
 #ifdef DAWCONTROL_USE_ENCODER
 lv_group_t* s_encGroup = nullptr;
 lv_group_t* s_prevEncGroup = nullptr;
@@ -89,6 +99,7 @@ const char* daw_name(uint8_t id)
     switch (id) {
     case dawcontrol::kDawFlStudio: return "FL Studio";
     case dawcontrol::kDawAbleton: return "Ableton Live";
+    case dawcontrol::kDawReaper: return "REAPER";
     default: return "host";
     }
 }
@@ -103,6 +114,8 @@ const char* mode_name(uint8_t mode)
     }
 }
 
+void draw_launch();
+
 void redraw()
 {
     if (!s_root) return;
@@ -113,11 +126,9 @@ void redraw()
                                   daw_name(s_screen.dawId.load()),
                                   mode_name(s_screen.mode.load()));
             lv_obj_set_style_text_color(s_hostLabel, kAccent, 0);
-        } else {
-            lv_label_set_text(s_hostLabel, "no host - install the DAW script");
-            lv_obj_set_style_text_color(s_hostLabel, kDim, 0);
         }
     }
+    draw_launch();
     char buf[dawcontrol::kTextCols + 1];
     for (uint8_t r = 0; r < dawcontrol::kTextRows; ++r) {
         if (!s_rows[r]) continue;
@@ -188,6 +199,92 @@ void draw_host_rows()
     }
 }
 
+bool daw_bit(uint8_t mask, uint8_t dawId) { return (mask >> dawId) & 1; }
+
+// No DAW script answering: what the hub can do about it. The hub reports
+// which DAWs it can start and which already run (HOST_INFO `daws=`); a
+// running one needs its script, not a second start, so it is named instead.
+void draw_launch()
+{
+    if (!s_hostLabel) return;
+    const bool connected = s_screen.connected.load();
+    const bool hub = status.hostAlive(crosspad::getClock().getTimeUs());
+    const uint8_t installed = hub ? status.hostDawsInstalled : 0;
+    const uint8_t running = hub ? status.hostDawsRunning : 0;
+
+    if (s_launchingDaw != dawcontrol::kDawOther &&
+        (connected || !hub || daw_bit(running, s_launchingDaw) ||
+         crosspad::getClock().getTimeUs() - s_launchingSinceUs > kLaunchWaitUs)) {
+        s_launchingDaw = dawcontrol::kDawOther;
+    }
+
+    bool anyButton = false;
+    for (uint8_t i = 0; i < kLaunchableCount; ++i) {
+        if (!s_launchBtns[i]) continue;
+        const uint8_t id = kLaunchable[i];
+        const bool show = !connected && s_launchingDaw == dawcontrol::kDawOther &&
+                          daw_bit(installed, id) && !daw_bit(running, id);
+        if (show) {
+            lv_obj_remove_flag(s_launchBtns[i], LV_OBJ_FLAG_HIDDEN);
+        } else {
+            lv_obj_add_flag(s_launchBtns[i], LV_OBJ_FLAG_HIDDEN);
+        }
+        anyButton |= show;
+    }
+    // The bar takes the DAW text rows' place: they are empty without a DAW,
+    // and the screen has no height for both.
+    if (s_launchBar) {
+        if (anyButton) {
+            lv_obj_remove_flag(s_launchBar, LV_OBJ_FLAG_HIDDEN);
+        } else {
+            lv_obj_add_flag(s_launchBar, LV_OBJ_FLAG_HIDDEN);
+        }
+    }
+    for (auto* row : s_rows) {
+        if (!row) continue;
+        if (anyButton) {
+            lv_obj_add_flag(row, LV_OBJ_FLAG_HIDDEN);
+        } else {
+            lv_obj_remove_flag(row, LV_OBJ_FLAG_HIDDEN);
+        }
+    }
+    if (connected) return;
+
+    uint8_t runningId = dawcontrol::kDawOther;
+    for (uint8_t id : kLaunchable) {
+        if (daw_bit(running, id)) { runningId = id; break; }
+    }
+    if (s_launchingDaw != dawcontrol::kDawOther) {
+        lv_label_set_text_fmt(s_hostLabel, "Starting %s...", daw_name(s_launchingDaw));
+        lv_obj_set_style_text_color(s_hostLabel, kBeatBar, 0);
+    } else if (runningId != dawcontrol::kDawOther) {
+        lv_label_set_text_fmt(s_hostLabel, "%s running - script not answering", daw_name(runningId));
+        lv_obj_set_style_text_color(s_hostLabel, kBeatBar, 0);
+    } else if (anyButton) {
+        lv_label_set_text(s_hostLabel, "no DAW running");
+        lv_obj_set_style_text_color(s_hostLabel, kDim, 0);
+    } else {
+        lv_label_set_text(s_hostLabel, "no host - install the DAW script");
+        lv_obj_set_style_text_color(s_hostLabel, kDim, 0);
+    }
+}
+
+void launch_cb(lv_event_t* e)
+{
+    const auto id = static_cast<uint8_t>(reinterpret_cast<uintptr_t>(lv_event_get_user_data(e)));
+    // The encoder can still press a button that just hid; ask the hub only
+    // for what it last said it can start.
+    const bool hub = status.hostAlive(crosspad::getClock().getTimeUs());
+    if (!hub || s_screen.connected.load() || s_launchingDaw != dawcontrol::kDawOther ||
+        !daw_bit(status.hostDawsInstalled, id) || daw_bit(status.hostDawsRunning, id)) {
+        return;
+    }
+    dawcontrol::sendLaunch(crosspad::getMidiOutput(), id);
+    s_launchingDaw = id;
+    s_launchingSinceUs = crosspad::getClock().getTimeUs();
+    draw_launch();
+}
+
 // A DAW that was closed, or a script that was reloaded, sends no bye. The
 // host pings once a second; after kHostTimeoutMs without any frame the
 // screen goes back to "no host", and hello goes out every kHelloRetryMs
@@ -215,6 +312,7 @@ void tick_cb(lv_timer_t*)
     if (s_hostRowTicksLeft == 0 || --s_hostRowTicksLeft == 0) {
         s_hostRowTicksLeft = kHostRowTicks;
         draw_host_rows();
+        draw_launch();
     }
 
     // The beat value is a level, not an edge: the host sends 1/2 on every
@@ -361,6 +459,27 @@ void make_audio_bar(lv_obj_t* parent)
     paint_audio_bar();
 }
 
+void make_launch_bar(lv_obj_t* parent)
+{
+    s_launchBar = lv_obj_create(parent);
+    lv_obj_set_width(s_launchBar, LV_PCT(100));
+    lv_obj_set_height(s_launchBar, 30);
+    lv_obj_set_style_bg_opa(s_launchBar, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(s_launchBar, 0, 0);
+    lv_obj_set_style_pad_all(s_launchBar, 0, 0);
+    lv_obj_set_style_pad_column(s_launchBar, 4, 0);
+    lv_obj_set_flex_flow(s_launchBar, LV_FLEX_FLOW_ROW);
+    lv_obj_remove_flag(s_launchBar, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_flag(s_launchBar, LV_OBJ_FLAG_HIDDEN);
+    char text[24];
+    for (uint8_t i = 0; i < kLaunchableCount; ++i) {
+        snprintf(text, sizeof(text), LV_SYMBOL_PLAY " %s", daw_name(kLaunchable[i]));
+        s_launchBtns[i] = make_small_button(s_launchBar, text, launch_cb,
+                                            reinterpret_cast<void*>(static_cast<uintptr_t>(kLaunchable[i])));
+        lv_obj_add_flag(s_launchBtns[i], LV_OBJ_FLAG_HIDDEN);
+    }
+}
+
 } // namespace
 
 void dawcontrol::snapshot(StateSnapshot& out)
@@ -435,6 +554,7 @@ lv_obj_t* DawControl_create(lv_obj_t* parent, App* app)
 
     // -- what the host says --
     s_hostLabel = make_row(s_root, "", kDim);
+    make_launch_bar(s_root);
     for (uint8_t r = 0; r < dawcontrol::kTextRows; ++r) {
         s_rows[r] = make_row(s_root, "", lv_color_hex(0xe0e6ec));
         lv_obj_set_style_text_font(s_rows[r], &lv_font_montserrat_18, 0);
@@ -526,6 +646,9 @@ void DawControl_destroy(lv_obj_t* root)
     s_beatDot = nullptr;
     for (auto& b : s_inputBtns) b = nullptr;
     s_usbBtn = nullptr;
+    s_launchBar = nullptr;
+    for (auto& b : s_launchBtns) b = nullptr;
+    s_launchingDaw = dawcontrol::kDawOther;
     s_root = nullptr;
     s_beatTicksLeft = 0;
 

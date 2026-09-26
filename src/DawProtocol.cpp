@@ -68,6 +68,15 @@ void sendPan(crosspad::IMidiOutput& out, uint8_t padIdx, uint8_t value)
     out.sendSysEx(frame, sizeof(frame));
 }
 
+void sendLaunch(crosspad::IMidiOutput& out, uint8_t dawId)
+{
+    const uint8_t frame[] = {
+        CROSSPAD_SYSEX_START, CROSSPAD_SYSEX_MANUFACTURER, CROSSPAD_CMD_DAW, kSubLaunch,
+        (uint8_t)(dawId & 0x7F), CROSSPAD_SYSEX_END,
+    };
+    out.sendSysEx(frame, sizeof(frame));
+}
+
 void sendPad(crosspad::IMidiOutput& out, uint8_t padIdx, bool pressed)
 {
     const uint8_t frame[] = {

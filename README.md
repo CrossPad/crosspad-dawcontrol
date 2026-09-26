@@ -5,8 +5,8 @@ paints the pads (instrument colours, hit feedback, beat), the LCD shows what
 the DAW says, and the board's own USB audio is the audio interface.
 
 The device side is generic: it plays notes and shows what it is told over one
-SysEx protocol. Each DAW gets a small host script that speaks it. First host:
-FL Studio (also under Wine). Ableton Live follows on the same protocol.
+SysEx protocol. Each DAW gets a small host script that speaks it: FL Studio
+(also under Wine) and REAPER. Ableton Live follows on the same protocol.
 
 ## What is in here
 
@@ -16,6 +16,7 @@ FL Studio (also under Wine). Ableton Live follows on the same protocol.
 | `src/DawControlPadLogic.cpp` | Pads → notes (+ aftertouch); LEDs = host colours, press flashes them |
 | `src/DawProtocol.cpp` | The wire protocol: parses host frames, answers `hello` |
 | `host/fl_studio/device_CrossPad.py` | FL Studio MIDI Controller Script |
+| `host/reaper/CrossPad.lua` | REAPER control script (ReaScript, runs from `__startup.lua`) |
 | `crosspad-app.json` | Registry metadata |
 
 ## Wire protocol
@@ -26,7 +27,7 @@ Catalog of record: crosspad-hil `crosspad_hil/knowledge/sysex.yaml`, `daw`.
 
 | sub | direction | payload |
 |---|---|---|
-| `01 hello` | host → device | `daw_id proto_ver` (1 FL Studio, 2 Ableton, 0 other) |
+| `01 hello` | host → device | `daw_id proto_ver` (1 FL Studio, 2 Ableton, 3 REAPER, 0 other) |
 | `01 hello` | device → host | `proto_ver pads rows caps` — reply (unless the device's own hello went out < 1 s earlier: that host hello is the answer to it), unsolicited on every app show and every 2 s while no host is known |
 | `02 led` | host → device | `pad r g b` |
 | `03 led_all` | host → device | 16 × `r g b` |
@@ -39,6 +40,7 @@ Catalog of record: crosspad-hil `crosspad_hil/knowledge/sysex.yaml`, `daw`.
 | `09 pad` | device → host | `pad state(1 press / 0 release)` — control mode only; no notes or aftertouch go out there |
 | `0A ping` | host → device | no args, once a second — the board drops a host silent for 5 s and hellos every 2 s until one answers |
 | `0B pan` | device → host | `pad value` — where on the pad the press sits (the two cells under every pad, from the STM32): 64 middle, 1 left edge, 127 right; while a control-mode pad is held and the value changes |
+| `0C launch` | device → hub | `daw_id` — start that DAW; the MIDI hub consumes it, no DAW ever sees it |
 | `7F bye` | host → device | host script unloading |
 
 Device → host beyond `hello`, `mode` and `pad` is plain MIDI: NoteOn/NoteOff
@@ -112,6 +114,16 @@ row shows the numbers. Put `{"version": "x.y.z"}` in
 orange, DAW Control and Settings → Info say "vX at crosspad.app/device", and
 the board remembers it across resets.
 
+Launching the DAW: the same report carries `daws=<installed>/<running>`,
+bitmasks by `daw_id` of the DAWs the hub can start (FL Studio and Ableton
+under Wine, REAPER native) and of those already running. With the hub there
+and no script answering, DAW Control shows one ▶ button per DAW the hub can
+start and that is not running; a press sends `launch` and the screen says
+"Starting FL Studio..." until the script's hello (or 90 s). A DAW that runs
+but whose script does not answer is named instead of offered again — load the
+script, or relink the port (FL under Wine). The DAW opens whatever it opens
+by itself; the hub never picks a project.
+
 What the script does: pads reach the selected channel (put FPC there and the
 pads wear FPC's pad colours; any other instrument paints them the channel
 colour). Rows: channel name, pattern name, tempo. The beat dot follows FL's
@@ -137,6 +149,47 @@ Choose what the board sends with `crosspad-hil audio route MICS|LINE_IN|…`
 (the presets name real signal paths, see `docs/subsystems/audio-routing.md`).
 The profile switch drops CDC, so switch after any `crosspad-hil` work is done:
 `crosspad-hil usb-mode audio`.
+
+## REAPER
+
+`host/reaper/CrossPad.lua` is the REAPER half, the same surface as the FL
+script: the pads play the selected track, painted in its colour; the rows are
+the track name, the region (or marker, or project) under the play cursor and
+the tempo; transport and the beat follow the play state. Control layout
+(double tap): play, stop, record, repeat / previous track, next track,
+metronome (hold and roll the finger to move the tempo), undo / mutes for
+tracks 1-8, lit as loud as each track plays. The encoder selects tracks, its
+switch plays.
+
+REAPER sends MIDI only to armed, monitored tracks, so the script arms the
+selected track with the CrossPad input on channel 10 (the encoder's CCs on
+channel 1 stay out of the instrument) and gives the previous track back
+exactly as it found it — also when the script stops.
+
+Linux: REAPER opens raw MIDI devices only (ALSA raw or JACK, never the ALSA
+sequencer), and the board's raw port belongs to the MIDI hub. The hub bridges
+a virtual raw card for it — load `snd-virmidi` once:
+
+```bash
+sudo modprobe snd-virmidi midi_devs=1
+echo snd-virmidi | sudo tee /etc/modules-load.d/crosspad-virmidi.conf
+echo "options snd-virmidi midi_devs=1" | sudo tee /etc/modprobe.d/crosspad-virmidi.conf
+```
+
+Start REAPER once with the module loaded (it lists new MIDI devices only on
+start), close it, and from a platform-idf checkout run
+`crosspad-hil reaper install`: it copies the script, starts it with REAPER
+(`Scripts/__startup.lua`) and enables `hw:VirMIDI` for input and output — the
+`midiins`/`midiouts` bitmasks in reaper.ini, which REAPER overwrites when it
+quits, so the installer refuses while REAPER runs. On Windows/macOS enable the
+**Crosspad** port in Preferences → MIDI Devices by hand. The DAW Control
+button ▶ REAPER then starts REAPER through the hub; the board shows
+"REAPER | pads" once the script answers.
+
+Bench (2026-09-27): ▶ REAPER on the board → hub `launched REAPER` →
+`DAW_STATE connected=1 daw=3`; control layout painted, pad 0 played (beats
+counting), stop, repeat and metronome toggled, a metronome-pad hold at the
+right edge took 120 to 165 BPM and the left edge back to 120.
 
 ## Kit sync (host side)
 
