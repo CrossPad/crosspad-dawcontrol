@@ -157,6 +157,17 @@ void redraw()
     }
 }
 
+// The C library's thread-safe localtime: POSIX names it localtime_r, MSVC
+// localtime_s, with the arguments the other way round.
+bool local_time(time_t t, struct tm& out)
+{
+#ifdef _WIN32
+    return localtime_s(&out, &t) == 0;
+#else
+    return localtime_r(&t, &out) != nullptr;
+#endif
+}
+
 // GB with one decimal, from MB, without LVGL's float formatting.
 void format_gb(char* out, size_t cap, uint32_t mb)
 {
@@ -177,7 +188,7 @@ void draw_host_rows()
             format_gb(total, sizeof(total), status.hostRamTotalMb);
             const time_t now = time(nullptr);
             struct tm local;
-            if (localtime_r(&now, &local)) strftime(clock, sizeof(clock), "%H:%M", &local);
+            if (local_time(now, local)) strftime(clock, sizeof(clock), "%H:%M", &local);
             lv_label_set_text_fmt(s_hostInfoLabel, "PC  CPU %u%%  RAM %s/%s GB  %s",
                                   static_cast<unsigned>(status.hostCpuPct), used, total, clock);
             lv_obj_set_style_text_color(s_hostInfoLabel, kAccent, 0);
