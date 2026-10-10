@@ -214,3 +214,7 @@ idf.py fullclean && idf.py build
 
 Requires crosspad-core ≥ 1.13.0 (`CROSSPAD_CMD_DAW`, `IMidiOutput::sendSysEx`,
 `PlatformServices::stm32MessageHandler`, the host fields of `CrosspadStatus`).
+
+## License
+
+GPL-3.0-or-later — see [LICENSE](LICENSE).
