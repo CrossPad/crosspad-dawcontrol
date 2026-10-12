@@ -373,7 +373,7 @@ void motion_gesture_cb(const void* data, crosspad::EventType, void*)
 {
     auto* d = static_cast<const crosspad::MotionGestureData*>(data);
     if (!d || d->gesture != crosspad::MotionGesture::DoubleTap) return;
-    lv_async_call(toggle_control_mode, nullptr);
+    crosspad_gui::getGuiPlatform().postToGui(toggle_control_mode, nullptr);
 }
 
 lv_obj_t* make_row(lv_obj_t* parent, const char* text, lv_color_t color)
