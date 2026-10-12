@@ -19,6 +19,7 @@
   #include "crosspad-gui/app/App.hpp"
 #endif
 
+#include "crosspad-gui/platform/GuiServices.h"
 #include "crosspad-gui/platform/IGuiPlatform.h"
 #include "crosspad/app/AppRegistrar.hpp"
 #include "crosspad/event/EventData.hpp"
@@ -37,9 +38,6 @@
 #include <cstdio>
 #include <ctime>
 #include <memory>
-
-// Fed by the platform's HOST_INFO / FW_LATEST companion verbs.
-extern crosspad::CrosspadStatus status;
 
 #ifdef ESP_PLATFORM
 extern "C" {
@@ -181,6 +179,8 @@ void format_gb(char* out, size_t cap, uint32_t mb)
 // DAW script and keeps reporting while the DAW shows nothing.
 void draw_host_rows()
 {
+    // Fed by the platform's HOST_INFO / FW_LATEST companion verbs.
+    const crosspad::CrosspadStatus& status = crosspad_gui::platformStatus();
     if (s_hostInfoLabel) {
         if (status.hostAlive(crosspad::getClock().getTimeUs())) {
             char used[12], total[12], clock[8] = "--:--";
@@ -218,6 +218,7 @@ bool daw_bit(uint8_t mask, uint8_t dawId) { return (mask >> dawId) & 1; }
 void draw_launch()
 {
     if (!s_hostLabel) return;
+    const crosspad::CrosspadStatus& status = crosspad_gui::platformStatus();
     const bool connected = s_screen.connected.load();
     const bool hub = status.hostAlive(crosspad::getClock().getTimeUs());
     const uint8_t installed = hub ? status.hostDawsInstalled : 0;
@@ -285,6 +286,7 @@ void launch_cb(lv_event_t* e)
     const auto id = static_cast<uint8_t>(reinterpret_cast<uintptr_t>(lv_event_get_user_data(e)));
     // The encoder can still press a button that just hid; ask the hub only
     // for what it last said it can start.
+    const crosspad::CrosspadStatus& status = crosspad_gui::platformStatus();
     const bool hub = status.hostAlive(crosspad::getClock().getTimeUs());
     if (!hub || s_screen.connected.load() || s_launchingDaw != dawcontrol::kDawOther ||
         !daw_bit(status.hostDawsInstalled, id) || daw_bit(status.hostDawsRunning, id)) {
