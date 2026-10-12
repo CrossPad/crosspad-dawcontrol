@@ -676,7 +676,7 @@ void DawControl_destroy(lv_obj_t* root)
     s_prevEncGroup = nullptr;
 #endif
 
-    lv_obj_delete_async(root);
+    if (root) lv_obj_delete_async(root);
 }
 
 REGISTER_APP_PL(DawControl, nullptr, "dawcontrol.png",
