@@ -19,7 +19,10 @@
   #include "crosspad-gui/app/App.hpp"
 #endif
 
-#include "crosspad-gui/platform/GuiServices.h"
+#include "crosspad-gui/CrosspadGuiVersion.hpp"
+#if CROSSPAD_GUI_VERSION_MAJOR >= 2
+  #include "crosspad-gui/platform/GuiServices.h"
+#endif
 #include "crosspad-gui/platform/IGuiPlatform.h"
 #include "crosspad/app/AppRegistrar.hpp"
 #include "crosspad/event/EventData.hpp"
@@ -39,6 +42,11 @@
 #include <ctime>
 #include <memory>
 
+#if CROSSPAD_GUI_VERSION_MAJOR < 2
+// crosspad-gui 1.x has no platformStatus(): each platform defines this global.
+extern crosspad::CrosspadStatus status;
+#endif
+
 #ifdef ESP_PLATFORM
 extern "C" {
   extern lv_indev_t* indev_encoderTop;
@@ -54,6 +62,16 @@ constexpr uint32_t kHostRowTicks = 1000 / kTickMs;   // host stats and clock, on
 constexpr uint32_t kHelloRetryTicks = dawcontrol::kHelloRetryMs / kTickMs;
 constexpr uint32_t kMbPerGb = 1024;
 constexpr int64_t kLaunchWaitUs = 90LL * 1000 * 1000;   // FL under Wine can take a minute to come up
+
+// Fed by the platform's HOST_INFO / FW_LATEST companion verbs.
+const crosspad::CrosspadStatus& host_status()
+{
+#if CROSSPAD_GUI_VERSION_MAJOR >= 2
+    return crosspad_gui::platformStatus();
+#else
+    return ::status;
+#endif
+}
 
 lv_obj_t* s_root = nullptr;
 lv_obj_t* s_hostLabel = nullptr;
@@ -179,8 +197,7 @@ void format_gb(char* out, size_t cap, uint32_t mb)
 // DAW script and keeps reporting while the DAW shows nothing.
 void draw_host_rows()
 {
-    // Fed by the platform's HOST_INFO / FW_LATEST companion verbs.
-    const crosspad::CrosspadStatus& status = crosspad_gui::platformStatus();
+    const crosspad::CrosspadStatus& status = host_status();
     if (s_hostInfoLabel) {
         if (status.hostAlive(crosspad::getClock().getTimeUs())) {
             char used[12], total[12], clock[8] = "--:--";
@@ -218,7 +235,7 @@ bool daw_bit(uint8_t mask, uint8_t dawId) { return (mask >> dawId) & 1; }
 void draw_launch()
 {
     if (!s_hostLabel) return;
-    const crosspad::CrosspadStatus& status = crosspad_gui::platformStatus();
+    const crosspad::CrosspadStatus& status = host_status();
     const bool connected = s_screen.connected.load();
     const bool hub = status.hostAlive(crosspad::getClock().getTimeUs());
     const uint8_t installed = hub ? status.hostDawsInstalled : 0;
@@ -286,7 +303,7 @@ void launch_cb(lv_event_t* e)
     const auto id = static_cast<uint8_t>(reinterpret_cast<uintptr_t>(lv_event_get_user_data(e)));
     // The encoder can still press a button that just hid; ask the hub only
     // for what it last said it can start.
-    const crosspad::CrosspadStatus& status = crosspad_gui::platformStatus();
+    const crosspad::CrosspadStatus& status = host_status();
     const bool hub = status.hostAlive(crosspad::getClock().getTimeUs());
     if (!hub || s_screen.connected.load() || s_launchingDaw != dawcontrol::kDawOther ||
         !daw_bit(status.hostDawsInstalled, id) || daw_bit(status.hostDawsRunning, id)) {
