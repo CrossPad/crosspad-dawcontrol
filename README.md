@@ -5,8 +5,10 @@ paints the pads (instrument colours, hit feedback, beat), the LCD shows what
 the DAW says, and the board's own USB audio is the audio interface.
 
 The device side is generic: it plays notes and shows what it is told over one
-SysEx protocol. Each DAW gets a small host script that speaks it: FL Studio
-(also under Wine) and REAPER. Ableton Live follows on the same protocol.
+SysEx protocol. Each DAW gets a small host script that speaks it. FL Studio
+(also under Wine) and REAPER work today. Ableton Live support is coming but
+not ready yet: there is no Ableton script, only its `daw_id` (2) in the
+protocol.
 
 ## What is in here
 
@@ -122,7 +124,8 @@ start and that is not running; a press sends `launch` and the screen says
 "Starting FL Studio..." until the script's hello (or 90 s). A DAW that runs
 but whose script does not answer is named instead of offered again — load the
 script, or relink the port (FL under Wine). The DAW opens whatever it opens
-by itself; the hub never picks a project.
+by itself; the hub never picks a project. Ableton has no script yet, so a
+launched Ableton is only named, not driven.
 
 What the script does: pads reach the selected channel (put FPC there and the
 pads wear FPC's pad colours; any other instrument paints them the channel
