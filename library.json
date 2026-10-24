@@ -1,8 +1,8 @@
 {
     "name": "crosspad-dawcontrol",
-    "version": "0.4.3",
+    "version": "0.5.0",
     "license": "GPL-3.0-or-later",
-    "description": "DAW controller surface: pads play the DAW, the DAW lights the pads and fills the screen (FL Studio, REAPER)",
+    "description": "DAW controller surface: pads play the DAW, the DAW lights the pads and fills the screen (FL Studio, Ableton Live, REAPER)",
     "keywords": ["crosspad", "dawcontrol", "lvgl", "pad"],
     "dependencies": {
         "crosspad-core": ">=1.70.0,<3.0.0",
