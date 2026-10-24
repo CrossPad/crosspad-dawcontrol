@@ -1,8 +1,8 @@
 {
   "name": "DAW Control",
   "id": "dawcontrol",
-  "version": "0.4.3",
-  "description": "DAW controller surface: pads play the DAW, the DAW lights the pads and fills the screen (FL Studio, REAPER)",
+  "version": "0.5.0",
+  "description": "DAW controller surface: pads play the DAW, the DAW lights the pads and fills the screen (FL Studio, Ableton Live, REAPER)",
   "category": "tools",
   "icon": "dawcontrol.png",
   "component_path": "components/crosspad-dawcontrol",
@@ -12,6 +12,7 @@
     "crosspad-gui": ">=1.28.0,<3.0.0"
   },
   "changelog": [
+    "0.5.0: Ableton Live MIDI Remote Script (host/ableton/CrossPad/, Live 11+): pads play the selected track, armed implicitly, Drum Rack pad colours, track/clip/tempo rows, transport and beat; control layout with transport, track select, metronome tempo, undo and eight meter-lit mutes; the encoder selects tracks",
     "0.4.3: registry description and README name the DAWs with a host script today (FL Studio, REAPER); Ableton Live is coming, not ready",
     "0.4.2: the host status comes from crosspad-gui (platformStatus()) instead of a global every platform had to define; the double-tap toggle reaches LVGL through postToGui(); a root deleted before the app's teardown is handled (gui 2.0 calls destroy with none); builds on core 1.70+/gui 1.28+ and on core/gui 2.x (>=1.70.0,<3.0.0 and >=1.28.0,<3.0.0) for the merge window",
     "0.3.0: control layout on a double tap of the case — pads report as `pad` frames, FL script maps them to transport/pattern/metronome/undo and eight channel mutes lit by the mixer track meter; metronome pad blinks with the beat and runs the tempo at a rate set by where it is pressed, snapping to a multiple of 5 only after a long run (`pan`, core 1.17 onPadPan); host `ping`, 5 s host timeout with hello retry; device->host `mode`",

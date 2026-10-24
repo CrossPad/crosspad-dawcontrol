@@ -5,10 +5,8 @@ paints the pads (instrument colours, hit feedback, beat), the LCD shows what
 the DAW says, and the board's own USB audio is the audio interface.
 
 The device side is generic: it plays notes and shows what it is told over one
-SysEx protocol. Each DAW gets a small host script that speaks it. FL Studio
-(also under Wine) and REAPER work today. Ableton Live support is coming but
-not ready yet: there is no Ableton script, only its `daw_id` (2) in the
-protocol.
+SysEx protocol. Each DAW gets a small host script that speaks it: FL Studio
+(also under Wine), Ableton Live and REAPER.
 
 ## What is in here
 
@@ -18,6 +16,7 @@ protocol.
 | `src/DawControlPadLogic.cpp` | Pads → notes (+ aftertouch); LEDs = host colours, press flashes them |
 | `src/DawProtocol.cpp` | The wire protocol: parses host frames, answers `hello` |
 | `host/fl_studio/device_CrossPad.py` | FL Studio MIDI Controller Script |
+| `host/ableton/CrossPad/` | Ableton Live MIDI Remote Script (Live 11 and later) |
 | `host/reaper/CrossPad.lua` | REAPER control script (ReaScript, runs from `__startup.lua`) |
 | `crosspad-app.json` | Registry metadata |
 
@@ -124,8 +123,7 @@ start and that is not running; a press sends `launch` and the screen says
 "Starting FL Studio..." until the script's hello (or 90 s). A DAW that runs
 but whose script does not answer is named instead of offered again — load the
 script, or relink the port (FL under Wine). The DAW opens whatever it opens
-by itself; the hub never picks a project. Ableton has no script yet, so a
-launched Ableton is only named, not driven.
+by itself; the hub never picks a project.
 
 What the script does: pads reach the selected channel (put FPC there and the
 pads wear FPC's pad colours; any other instrument paints them the channel
@@ -152,6 +150,41 @@ Choose what the board sends with `crosspad-hil audio route MICS|LINE_IN|…`
 (the presets name real signal paths, see `docs/subsystems/audio-routing.md`).
 The profile switch drops CDC, so switch after any `crosspad-hil` work is done:
 `crosspad-hil usb-mode audio`.
+
+## Ableton Live
+
+`host/ableton/CrossPad/` is a MIDI Remote Script for Live 11 and later, the
+same surface as the FL and REAPER scripts: the pads play the selected track —
+a Drum Rack's first sixteen pads from C1 (note 36), each lit in its chain's
+colour (an empty pad dark, a muted one a glimmer), any other track in the
+track's colour. Rows: the track name, the highlighted clip (or the selected
+scene) and the tempo; transport and the beat follow Live's. Control layout
+(double tap): play/stop, stop, arrangement record, loop / previous track,
+next track, metronome (hold and roll the finger to move the tempo), undo /
+mutes for tracks 1-8, lit as loud as each track plays. The encoder selects
+tracks (CC 1 and 64 are taken by the script, so they never reach the
+instrument), its switch plays and stops.
+
+Live sends a controller's notes only to armed tracks, so the script arms the
+selected track implicitly, as Live's own pad controllers do — the arm button
+stays as it was — and lets go when the selection moves or the script stops.
+
+1. Copy `host/ableton/CrossPad/` as `CrossPad/` into the User Library's
+   `Remote Scripts/` folder: `~/Music/Ableton/User Library/Remote Scripts/`
+   on macOS, `<Documents>\Ableton\User Library\Remote Scripts\` on Windows,
+   under Wine that path inside the prefix. Live finds new scripts only at
+   startup.
+2. Settings → Link, Tempo & MIDI: Control Surface **CrossPad**, Input and
+   Output the board's port (**Crosspad** in the CDC profile, **Crosspad
+   Audio** in the MIDI+UAC2 one — never "CrossPad MIDI+Serial", that is the
+   STM32 bridge). Under MIDI Ports switch **Track** and **Remote** on for that
+   input, Remote for the output. On macOS and Windows Live may set all of
+   this by itself: the script names the board's USB IDs (`get_capabilities`).
+   **Under Wine pick "CrossPad Hub"**, as for FL.
+3. On the board open **DAW Control**: "Ableton Live | pads" once the script
+   answers. The DAW Control button ▶ Ableton Live starts Live through the hub
+   (Wine, `crosspad-hil midi hub`). Live's Log.txt has the script's
+   "CrossPad: DAW Control app connected" line, and its errors.
 
 ## REAPER
 
