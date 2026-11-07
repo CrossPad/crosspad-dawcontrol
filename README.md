@@ -112,7 +112,7 @@ login, so this works with FL closed too. While the reports arrive the status
 bar shows the USB glyph in place of the charging bolt, and DAW Control's host
 row shows the numbers. Put `{"version": "x.y.z"}` in
 `~/.config/crosspad/latest.json` to announce newer firmware: the glyph turns
-orange, DAW Control and Settings → Info say "vX at crosspad.app/device", and
+orange, DAW Control and Settings → Info say "vX at play.crosspad.app/device", and
 the board remembers it across resets.
 
 Launching the DAW: the same report carries `daws=<installed>/<running>`,
