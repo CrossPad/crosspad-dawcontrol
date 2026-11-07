@@ -130,7 +130,7 @@ TEMPO_ACCEL_MAX = 4.0
 TEMPO_ACCEL_LEAN = 0.9     # lean (0..1) from which the hold counts as "at the edge"
 TEMPO_MIN, TEMPO_MAX = 20.0, 999.0
 # The cells saturate under any firm press, so a finger covering both halves
-# reads within ±10 whatever it does (SWD trace, 18.09); rolling it off one
+# reads within ±10 whatever it does (SWD trace); rolling it off one
 # half sweeps the pan 20..125 as that cell unloads. Inside the dead zone is
 # "the middle", the sweep is the graded part, the free cell is the edge.
 PAN_DEAD_ZONE = 20

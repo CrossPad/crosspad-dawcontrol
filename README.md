@@ -222,11 +222,6 @@ quits, so the installer refuses while REAPER runs. On Windows/macOS enable the
 button ▶ REAPER then starts REAPER through the hub; the board shows
 "REAPER | pads" once the script answers.
 
-Bench (2026-09-27): ▶ REAPER on the board → hub `launched REAPER` →
-`DAW_STATE connected=1 daw=3`; control layout painted, pad 0 played (beats
-counting), stop, repeat and metronome toggled, a metronome-pad hold at the
-right edge took 120 to 165 BPM and the left edge back to 120.
-
 ## Kit sync (host side)
 
 A folder of WAVs becomes a kit on the card with
