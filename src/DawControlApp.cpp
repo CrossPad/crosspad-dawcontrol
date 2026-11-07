@@ -216,7 +216,7 @@ void draw_host_rows()
     }
     if (s_fwLabel) {
         if (status.fwUpdateAvailable) {
-            lv_label_set_text_fmt(s_fwLabel, "v%s available - crosspad.app/device", status.fwLatest);
+            lv_label_set_text_fmt(s_fwLabel, "v%s available - play.crosspad.app/device", status.fwLatest);
             lv_obj_set_style_text_color(s_fwLabel, kBeatBar, 0);
         } else if (status.fwLatest[0]) {
             lv_label_set_text(s_fwLabel, "Firmware up to date");
