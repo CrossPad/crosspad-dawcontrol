@@ -117,7 +117,7 @@ void DawControlPadLogic::setHostColor(uint8_t padIdx, uint8_t r, uint8_t g, uint
 void DawControlPadLogic::clearHostColors()
 {
     for (uint8_t i = 0; i < 16; ++i) {
-        hostColor_[i].store(0);
+        hostColor_[i].store(kNoHostColor);
         if (!held_[i].load()) paint(i, false);
     }
 }
@@ -140,11 +140,12 @@ void DawControlPadLogic::paint(uint8_t padIdx, bool held)
 {
     if (!padManager_) return;
     const uint32_t host = restingColor(padIdx);
+    const bool painted = host != kNoHostColor;   // 0 is a real colour: black
     uint32_t rgb;
     if (held) {
-        rgb = host ? brighten(host) : kIdleFlash;
+        rgb = painted ? brighten(host) : kIdleFlash;
     } else {
-        rgb = host ? host : kIdleColor;
+        rgb = painted ? host : kIdleColor;
     }
     padManager_->setPadColor(padIdx, (rgb >> 16) & 0xFF, (rgb >> 8) & 0xFF, rgb & 0xFF);
 }

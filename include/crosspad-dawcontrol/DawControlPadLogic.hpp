@@ -57,7 +57,16 @@ private:
     uint32_t restingColor(uint8_t padIdx) const;
     void releaseHeldNotes();
 
-    std::atomic<uint32_t> hostColor_[16] = {};   // 0xRRGGBB, 0 = none
+    /// No host colour on this pad: outside the 24 RGB bits, so a host's
+    /// 0,0,0 is black (an empty pad stays dark), not "no host".
+    static constexpr uint32_t kNoHostColor = 0xFF000000u;
+
+    std::atomic<uint32_t> hostColor_[16] = {
+        kNoHostColor, kNoHostColor, kNoHostColor, kNoHostColor,
+        kNoHostColor, kNoHostColor, kNoHostColor, kNoHostColor,
+        kNoHostColor, kNoHostColor, kNoHostColor, kNoHostColor,
+        kNoHostColor, kNoHostColor, kNoHostColor, kNoHostColor,
+    };   // 0xRRGGBB, or kNoHostColor
     std::atomic<bool> held_[16] = {};
     std::atomic<uint8_t> baseNote_{kDefaultBaseNote};
     std::atomic<uint8_t> channel_{kDefaultChannel};
